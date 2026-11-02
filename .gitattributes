@@ -1,0 +1,18 @@
+# 统一换行符：仓库内一律 LF，检出时按平台转换
+* text=auto
+
+*.cs text diff=csharp
+*.csproj text
+*.props text
+*.sln text eol=crlf
+*.md text
+*.json text
+*.config text
+*.ps1 text
+
+# 二进制与生成物不做转换
+*.bin binary
+*.png binary
+*.ico binary
+*.dll binary
+*.exe binary

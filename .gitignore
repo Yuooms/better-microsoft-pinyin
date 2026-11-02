@@ -1,0 +1,39 @@
+# ── 构建产物 ────────────────────────────────────────────────────────────────
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Ll]og/
+[Ll]ogs/
+*.user
+*.suo
+*.cache
+*.pdb
+*.ilk
+*.binlog
+
+# ── Visual Studio / Rider / VS Code ────────────────────────────────────────
+.vs/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.DotSettings.user
+
+# ── .NET 发布产物 ──────────────────────────────────────────────────────────
+publish/
+*.nupkg
+*.snupkg
+
+# ── 本项目运行期数据，绝不入库 ────────────────────────────────────────────
+# 内置词库为构建期生成物，由 tools/LexiconBuilder 产出
+data/lexicon.bin
+data/*.tmp
+
+# ── 系统与临时文件 ─────────────────────────────────────────────────────────
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.tmp
+*.log

@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>BetterPinyin.Contracts</RootNamespace>
+    <AssemblyName>BetterPinyin.Contracts</AssemblyName>
+    <Description>跨进程契约与接入层抽象。注入路线（注入 DLL + 核心服务）复用本项目，不得引入任何 UI 或业务依赖。</Description>
+  </PropertyGroup>
+
+</Project>

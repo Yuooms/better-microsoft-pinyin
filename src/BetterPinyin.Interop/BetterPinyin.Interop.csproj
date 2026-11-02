@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>BetterPinyin.Interop</RootNamespace>
+    <AssemblyName>BetterPinyin.Interop</AssemblyName>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <Description>Win32 / COM / UI Automation 封装层，不包含任何业务逻辑。</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BetterPinyin.Contracts\BetterPinyin.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>
