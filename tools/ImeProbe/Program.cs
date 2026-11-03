@@ -69,6 +69,40 @@ internal static class Program
             return exitCode;
         }
 
+        if (args.Any(a => a.Equals("--shot-only", StringComparison.OrdinalIgnoreCase)))
+        {
+            var target = args
+                .FirstOrDefault(a => a.StartsWith("--shot=", StringComparison.OrdinalIgnoreCase))
+                ?["--shot=".Length..] ?? "shot.bmp";
+
+            var scaleArg = args.FirstOrDefault(a => a.StartsWith("--scale=", StringComparison.OrdinalIgnoreCase));
+            var scale = scaleArg is not null && int.TryParse(scaleArg["--scale=".Length..], out var parsed) ? Math.Max(1, parsed) : 1;
+
+            var rectArg = args.FirstOrDefault(a => a.StartsWith("--rect=", StringComparison.OrdinalIgnoreCase));
+            bool ok;
+            int w;
+            int h;
+
+            if (rectArg is not null &&
+                TryParseRect(rectArg["--rect=".Length..], out var rx, out var ry, out var rw, out var rh))
+            {
+                ok = ScreenGrabber.Capture(target, rx, ry, rw, rh, scale, out w, out h);
+            }
+            else
+            {
+                ok = ScreenGrabber.CaptureVirtualScreen(target, out w, out h, scale);
+            }
+
+            if (ok)
+            {
+                Console.WriteLine($"[截图] {target}（{w}x{h}）");
+                return 0;
+            }
+
+            Console.WriteLine("[截图] 失败");
+            return 1;
+        }
+
         _tracker = new CompositionTracker();
         _tracker.CompositionChanged += (_, e) => LogQueue.Enqueue($"[拼音] {e.RawInput}");
         _tracker.CompositionEnded += (_, e) => LogQueue.Enqueue($"[组字结束] 原因={e.Reason}");
@@ -147,7 +181,7 @@ internal static class Program
             modifiers |= ModifierKeys.Windows;
         }
 
-        _tracker?.Feed(e.VirtualKey, e.IsKeyDown, modifiers, e.IsInjected);
+        _tracker?.Feed(e.VirtualKey, e.IsKeyDown, modifiers, e.IsOwnInjection);
     }
 
     private static void PollCallback(object? state)
@@ -269,6 +303,19 @@ internal static class Program
         {
             Console.WriteLine("[设置] 未读到微软拼音设置（可能未安装或注册表不可访问）");
         }
+    }
+
+    private static bool TryParseRect(string text, out int x, out int y, out int width, out int height)
+    {
+        x = y = width = height = 0;
+        var parts = text.Split(',');
+        return parts.Length == 4
+               && int.TryParse(parts[0], out x)
+               && int.TryParse(parts[1], out y)
+               && int.TryParse(parts[2], out width)
+               && int.TryParse(parts[3], out height)
+               && width > 0
+               && height > 0;
     }
 
     private static void RunMessageLoop()

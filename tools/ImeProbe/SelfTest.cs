@@ -155,7 +155,7 @@ internal static class SelfTest
         foreach (var ch in sample)
         {
             var virtualKey = char.ToUpperInvariant(ch);
-            var ok = KeySender.SendVirtualKey(virtualKey);
+            var ok = KeySender.SendVirtualKey(virtualKey, markAsOwn: false);
             if (!ok && index == 0)
             {
                 Console.WriteLine($"[自测] ✗ SendInput 失败，Win32 错误码 = {System.Runtime.InteropServices.Marshal.GetLastWin32Error()}");
@@ -236,7 +236,7 @@ internal static class SelfTest
 
     private static void CancelComposition()
     {
-        KeySender.SendVirtualKey(0x1B);
+        KeySender.SendVirtualKey(0x1B, markAsOwn: false);
         Thread.Sleep(80);
     }
 

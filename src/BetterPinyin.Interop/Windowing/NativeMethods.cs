@@ -111,6 +111,76 @@ public static class NativeMethods
     [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW")]
     public static extern IntPtr GetWindowLongPtr(IntPtr hWnd, int nIndex);
 
+    /// <summary>设置窗口的扩展样式。</summary>
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+    public static extern IntPtr SetWindowLongPtr(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+    /// <summary>扩展样式索引。</summary>
+    public const int GWL_EXSTYLE = -20;
+
+    /// <summary>窗口不激活（点击不抢焦点）。</summary>
+    public const int WS_EX_NOACTIVATE = 0x08000000;
+
+    /// <summary>工具窗口（不出现在任务栏与 Alt+Tab）。</summary>
+    public const int WS_EX_TOOLWINDOW = 0x00000080;
+
+    /// <summary>鼠标点击穿透到下层窗口。</summary>
+    public const int WS_EX_TRANSPARENT = 0x00000020;
+
+    /// <summary>置顶窗口。</summary>
+    public const int WS_EX_TOPMOST = 0x00000008;
+
+    /// <summary>置顶窗口的 Z 序插值。</summary>
+    public static readonly IntPtr HWND_TOPMOST = new(-1);
+
+    /// <summary>保持尺寸不变。</summary>
+    public const uint SWP_NOSIZE = 0x0001;
+
+    /// <summary>保持位置不变。</summary>
+    public const uint SWP_NOMOVE = 0x0002;
+
+    /// <summary>不激活窗口。</summary>
+    public const uint SWP_NOACTIVATE = 0x0010;
+
+    /// <summary>显示窗口。</summary>
+    public const uint SWP_SHOWWINDOW = 0x0040;
+
+    /// <summary>设置窗口位置与尺寸（物理像素）。</summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool SetWindowPos(
+        IntPtr hWnd,
+        IntPtr hWndInsertAfter,
+        int x,
+        int y,
+        int cx,
+        int cy,
+        uint uFlags);
+
+    /// <summary>获取窗口所在显示器的 DPI。</summary>
+    [DllImport("user32.dll")]
+    public static extern uint GetDpiForWindow(IntPtr hWnd);
+
+    /// <summary>
+    /// 给窗口加上「不抢焦点、点击穿透」的扩展样式。
+    /// </summary>
+    /// <param name="hwnd">窗口句柄。</param>
+    /// <remarks>
+    /// 云候选浮窗绝不能激活：一旦抢走焦点，输入法会立刻提交组字，
+    /// 用户还没按采纳键，拼音就已经上屏了。点击穿透则保证浮窗不会挡住用户操作。
+    /// </remarks>
+    public static void ApplyNoActivateStyle(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        var style = GetWindowLongPtr(hwnd, GWL_EXSTYLE).ToInt64();
+        style |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT;
+        SetWindowLongPtr(hwnd, GWL_EXSTYLE, new IntPtr(style));
+    }
+
     /// <summary>枚举顶层窗口。返回 false 表示枚举结束。</summary>
     public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 

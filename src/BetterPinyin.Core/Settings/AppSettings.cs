@@ -24,6 +24,9 @@ public sealed class AppSettings
     /// <summary>触发云查询的最小输入长度。</summary>
     public int MinQueryLength { get; set; } = 2;
 
+    /// <summary>停止输入后等待多久再发请求（毫秒）。太短会浪费请求，太长会让用户觉得慢。</summary>
+    public int DebounceMs { get; set; } = 120;
+
     /// <summary>单次云端请求超时（毫秒）。</summary>
     public int RequestTimeoutMs { get; set; } = 1500;
 

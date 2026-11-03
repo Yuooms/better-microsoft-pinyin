@@ -154,7 +154,7 @@ internal static class HitTest
             }
         }
 
-        KeySender.SendVirtualKey(0x1B);
+        KeySender.SendVirtualKey(0x1B, markAsOwn: false);
         Thread.Sleep(120);
         SelfTest.SafeKill(notepad);
 

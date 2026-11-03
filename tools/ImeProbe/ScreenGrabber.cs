@@ -20,7 +20,7 @@ internal static class ScreenGrabber
     /// <param name="width">桌面宽度。</param>
     /// <param name="height">桌面高度。</param>
     /// <returns>是否成功。</returns>
-    public static bool CaptureVirtualScreen(string path, out int width, out int height)
+    public static bool CaptureVirtualScreen(string path, out int width, out int height, int downscale = 1)
     {
         // SM_XVIRTUALSCREEN = 76, SM_YVIRTUALSCREEN = 77,
         // SM_CXVIRTUALSCREEN = 78, SM_CYVIRTUALSCREEN = 79
@@ -29,7 +29,7 @@ internal static class ScreenGrabber
         var originX = GetSystemMetrics(76);
         var originY = GetSystemMetrics(77);
 
-        return Capture(path, originX, originY, width, height, 1, out _, out _);
+        return Capture(path, originX, originY, width, height, downscale, out width, out height);
     }
 
     /// <summary>

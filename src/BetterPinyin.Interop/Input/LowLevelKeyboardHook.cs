@@ -15,8 +15,14 @@ public sealed class KeyboardHookEventArgs : EventArgs
     /// <summary>是否为按下（false 表示抬起）。</summary>
     public required bool IsKeyDown { get; init; }
 
-    /// <summary>是否由本程序或其它程序通过 SendInput 注入。</summary>
+    /// <summary>是否由 SendInput 之类的工具注入（含本程序）。</summary>
     public required bool IsInjected { get; init; }
+
+    /// <summary>
+    /// 是否是本程序自己注入的按键（靠 <c>dwExtraInfo</c> 上的标记识别）。
+    /// 只有这一类必须被忽略，否则取消组字与上屏的按键会被自己重新计入拼音串。
+    /// </summary>
+    public required bool IsOwnInjection { get; init; }
 
     /// <summary>
     /// 设为 true 表示吞掉这次按键，不再传给目标窗口。
@@ -116,6 +122,7 @@ public sealed class LowLevelKeyboardHook : IDisposable
             VirtualKey = (int)info.VirtualKeyCode,
             IsKeyDown = isDown,
             IsInjected = (info.Flags & NativeMethods.LLKHF_INJECTED) != 0,
+            IsOwnInjection = info.ExtraInfo == NativeMethods.InjectionMarker,
         };
 
         try
