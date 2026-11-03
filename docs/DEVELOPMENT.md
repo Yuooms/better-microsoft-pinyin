@@ -49,6 +49,41 @@ dotnet run --project tools/ImeProbe -- --shot-only --rect=470,170,1010,700 --sca
 
 `--self-test` 的退出码：`0` 成功，`4` 没找到候选窗，`6` 前台抢焦失败（此时不会发送任何按键）。
 
+新增的几件工具：
+
+```bash
+# 模拟"输入后按采纳键"，直接验证上屏链路（6 = 数字 6，oem3 = · 键）
+dotnet run --project tools/ImeProbe -- --self-test ruonawa --accept=6
+dotnet run --project tools/ImeProbe -- --self-test yisitalu --accept=oem3
+
+# 英文模式：先按 Shift 切到英文状态，再输入、采纳
+dotnet run --project tools/ImeProbe -- --self-test ruonawa --accept=6 --english
+
+# 摆窗口 + 截图，便于核对界面
+dotnet run --project tools/ImeProbe -- --activate-app --move-app=300,80,940,660
+```
+
+`BetterPinyin.Tests -- --probe <拼音> candidate=<候选>` 可以单独观察某个候选的读音判定结果（`Strict` / `Extended` / `None`），排查"为什么这个词没出现"时最直接。
+
+## 内置词库
+
+`assets/lexicon.bin` 是构建产物，随仓库提交，所以 clone 后直接 `dotnet build` 即可。需要重新生成时：
+
+```bash
+# 1. 下载源数据（约 7.5 MB，不入库）
+./tools/LexiconBuilder/fetch-sources.ps1
+
+# 2. 生成 assets/lexicon.bin
+dotnet run --project tools/LexiconBuilder -c Release -- \
+  --pinyin-data tools/LexiconBuilder/sources/pinyin-data.txt \
+  --phrase-data tools/LexiconBuilder/sources/phrase-pinyin.txt \
+  --pinyin-pro  tools/LexiconBuilder/sources/pinyin-pro-dicts.txt \
+  --word-freq   tools/LexiconBuilder/sources/jieba-dict.txt \
+  --out         assets/lexicon.bin
+```
+
+源数据不随仓库分发；格式、许可与限制见 [LEXICON.md](LEXICON.md)。
+
 ## 目录约定
 
 ```

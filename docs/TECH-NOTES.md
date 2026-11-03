@@ -102,3 +102,49 @@ SendInput(Esc)
 - **同时启用 WPF 与 WinForms 时**，SDK 会为两者注入全局 using，导致 `Application`、`UserControl`、`Brush`、`ComboBox` 全部二义。在 csproj 里 `<Using Remove="System.Windows.Forms" />`，只让托盘那个文件显式引入 WinForms。
 - **UIA 事件需要消息泵**。当前 `UiaWorker` 是阻塞队列循环，收不到 UIA 事件；若将来要支持没有系统插入符的应用（Chromium/Electron），需要把它改成 `MsgWaitForMultipleObjects` + `GetMessage` 的混合循环。
 - **托管 `System.Windows.Automation` 不要用**：某些应用发出的 UIA 事件 `runtimeId` 为 null，包装层会抛异常并可能终止进程。手写 COM 时把 `runtimeId` 声明成 `IntPtr` 且永不解引用即可。
+
+## 十、读音判定：为什么是候选驱动
+
+最初的写法是「先把输入切成音节，再比较音节数」。这条路走不通，因为**输入的切分本来就不唯一**：
+
+| 输入 | 唯一化切分 | 漏掉的可能 |
+|---|---|---|
+| `xian` | `[xian]` | 「西安」= `xi` + `an` |
+| `fangan` | `[fang][an]` | 「反感」= `fan` + `gan` |
+| `zuang` | 切不出来 | 模糊音用户手打的 `zhuang` |
+
+现在的做法反过来：拿候选词每个字的**读音集合**当骨架，用输入从左往右覆盖它，只要存在一条走得通的路径就算匹配。DP 状态是 `(候选字下标, 输入位置)`，规模上限 16×33，单次匹配在几十微秒。
+
+配套的三个设计：
+
+1. **末音节残段只允许出现在候选最后一个音节**。`yisital` 能命中「伊斯塔露」，但 `ruonaw` 不会命中「若娜瓦壁纸」——否则打字打到一半就会冒出长词。
+2. **模糊音不再是整串 Replace**。`zh→z` 之后再 `ng→n`，`an` 会变成 `al`，音节边界全乱。改为构建「拼写 → 规范音节 id 集合」的变体表，`zuang`、`lv`、`huar` 这些写法都能正确落到规范音节上。
+3. **多音字用集合，不取首读音**。`银行` 同时接受 `yinhang` 与 `yinxing`；如果按首读音拼合，`yinhang` 会被误拒。
+
+`ResultSanitizer` 只做粗筛（纯汉字、2~12 字、去重、回显剔除），真正的长度约束由音节数在匹配阶段完成。
+
+## 十一、数字键拦截：三个必须处理的时序
+
+扩展云联想用数字键采纳，键号接在本地候选之后（本地显示 5 个 → 6/7/8）。这条链路有三个坑：
+
+1. **吞键后要连 keyup 一起吞**。只吞 keydown，目标窗口会收到孤立 keyup；按住不放时自动重复还会让正文冒出 `666`。用 `_swallowUntilKeyUp` 记录，直到抬起才移除。
+2. **提交前必须复核**。从吞键到发 Esc 之间有几百毫秒，输入法可能补上了新候选。提交前再读一次候选窗：若该数字已经变成合法的本地编号，就放弃提交并把按键**注入回去**，让输入法自己选。
+3. **不要在上屏前 `Reset()` 状态机**。`Reset()` 会递增代次，而提交前正好要用代次判断「组字有没有变化」，先 Reset 会让校验永远失败。正确做法是只在 `finally` 里 Reset。
+
+另外，钩子回调里绝对不能做 UIA 或网络：映射表在查询完成时就构建好，钩子侧只做一次数组线性查找（最多 5 项）。
+
+## 十二、亚克力：Win10 与 Win11 不是同一套 API
+
+| 系统 | 方式 | 说明 |
+|---|---|---|
+| Windows 11 22621+ | `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE, DWMSBT_TRANSIENTWINDOW)` | 公开接口，也就是系统「设置」用的那套预设 |
+| Windows 10 1803+ | `SetWindowCompositionAttribute(ACCENT_ENABLE_ACRYLICBLURBEHIND)` | 未公开，但系统自身的设置、开始菜单用的也是它 |
+
+两者都要求窗口**自己不要画不透明背景**：把 `CompositionTarget.BackgroundColor` 置为透明，并 `DwmExtendFrameIntoClientArea(-1)`，否则模糊会被 WPF 的绘制盖住。
+
+两个容易踩的点：
+
+- **分层窗口（`AllowsTransparency=True`）吃不到 DWM 模糊**。云浮窗的「亚克力」样式因此必须是非分层窗口，点击穿透改由 `WM_NCHITTEST` 返回 `HTTRANSPARENT` 实现；样式切换时只能重建窗口，WPF 不允许运行时改这个属性。
+- **分层要跟系统一致**：系统「设置」只让侧边栏透出模糊，内容区接近不透明。整窗都用低透明度会让长文本在彩色壁纸上难以阅读。本项目的设置窗口采用同样的分层：导航 `#1FFFFFFF`，内容区 `#F7FFFFFF`。
+
+失败时一律恢复实色背景并记日志——宁可看起来普通，也不要出现一块黑底或直接透出桌面。
