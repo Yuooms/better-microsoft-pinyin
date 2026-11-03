@@ -16,47 +16,64 @@
         UseLayoutRounding="True">
 
     <!--
-        浮窗刻意不使用任何可交互控件：
-        它永远不该拿到焦点，否则输入法会立即提交组字，用户还没按采纳键拼音就上屏了。
+        三条硬约束，任何一条被破坏都会毁掉输入体验：
+        1. 绝不抢焦点：WS_EX_NOACTIVATE + ShowActivated=False。
+        2. 不挡鼠标：WS_EX_TRANSPARENT + IsHitTestVisible=False。
+        3. 不遮候选条：候选条在沉浸式 IME 图层，永远在我们上方，只能贴边显示。
     -->
     <Border x:Name="Card"
             Background="#FFFFFF"
             BorderBrush="#D8DDE5"
             BorderThickness="1"
             CornerRadius="8"
-            Padding="12,7"
+            Padding="12,6"
             Margin="6"
-            HorizontalAlignment="Left">
+            MaxWidth="380">
         <Border.Effect>
             <DropShadowEffect BlurRadius="14" ShadowDepth="2" Direction="270" Opacity="0.16" Color="#000000" />
         </Border.Effect>
 
-        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <TextBlock x:Name="CloudGlyph"
-                       Text="&#xE753;"
-                       FontFamily="Segoe MDL2 Assets"
-                       FontSize="13"
-                       Foreground="#0F6CBD"
-                       VerticalAlignment="Center"
-                       Margin="0,0,7,0" />
-            <TextBlock x:Name="CandidateText"
-                       Text="候选词"
-                       FontFamily="Microsoft YaHei UI"
-                       FontSize="15"
-                       FontWeight="SemiBold"
-                       Foreground="#1F2328"
-                       VerticalAlignment="Center" />
-            <Border Background="#F1F3F6"
-                    CornerRadius="4"
-                    Padding="5,1"
-                    Margin="10,0,0,0"
-                    VerticalAlignment="Center">
-                <TextBlock x:Name="KeyHint"
-                           Text="Tab"
-                           FontFamily="Segoe UI"
-                           FontSize="11"
-                           Foreground="#6B7280" />
-            </Border>
-        </StackPanel>
+        <ItemsControl x:Name="Rows" IsHitTestVisible="False">
+            <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                    <Grid Margin="0,1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Text="&#xE753;"
+                                   FontFamily="Segoe MDL2 Assets"
+                                   FontSize="12"
+                                   Foreground="#0F6CBD"
+                                   Opacity="{Binding IconOpacity}"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,7,0" />
+
+                        <TextBlock Grid.Column="1"
+                                   Text="{Binding Text}"
+                                   FontFamily="Microsoft YaHei UI"
+                                   FontSize="{Binding TextSize}"
+                                   FontWeight="{Binding TextWeight}"
+                                   Foreground="#1F2328"
+                                   TextTrimming="CharacterEllipsis"
+                                   VerticalAlignment="Center" />
+
+                        <Border Grid.Column="2"
+                                Background="#F1F3F6"
+                                CornerRadius="4"
+                                Padding="5,1"
+                                Margin="10,0,0,0"
+                                VerticalAlignment="Center">
+                            <TextBlock Text="{Binding KeyLabel}"
+                                       FontFamily="Segoe UI"
+                                       FontSize="11"
+                                       Foreground="#6B7280" />
+                        </Border>
+                    </Grid>
+                </DataTemplate>
+            </ItemsControl.ItemTemplate>
+        </ItemsControl>
     </Border>
 </Window>

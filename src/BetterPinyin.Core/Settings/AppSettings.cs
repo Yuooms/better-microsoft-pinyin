@@ -15,11 +15,38 @@ public sealed class AppSettings
     /// <summary>云联想总开关。</summary>
     public bool CloudAssistEnabled { get; set; } = true;
 
-    /// <summary>采纳云候选的按键，可选 <c>Tab</c> / <c>Semicolon</c> / <c>Backquote</c>。</summary>
-    public string AcceptKey { get; set; } = "Tab";
+    /// <summary>是否启用「云联想」（严格按音节数匹配）。</summary>
+    public bool StrictEnabled { get; set; } = true;
 
-    /// <summary>浮窗最多显示几条云候选。</summary>
-    public int MaxSuggestions { get; set; } = 1;
+    /// <summary>云联想的采纳键标识，默认 <c>Oem3</c>（即 <c>·</c> 键）。</summary>
+    public string StrictAcceptKey { get; set; } = "Oem3";
+
+    /// <summary>云联想命中本地已有候选时是否隐藏。</summary>
+    public bool StrictDedupeLocal { get; set; } = true;
+
+    /// <summary>是否启用「扩展云联想」（输入是前缀的更长词）。</summary>
+    public bool ExtendedEnabled { get; set; } = true;
+
+    /// <summary>扩展云联想最多显示几条（1~4）。</summary>
+    public int ExtendedMaxCount { get; set; } = 3;
+
+    /// <summary>扩展键位分配方式：<c>Auto</c> 接在本地候选之后，<c>Manual</c> 用 <see cref="ExtendedKeys"/>。</summary>
+    public string ExtendedKeyMode { get; set; } = "Auto";
+
+    /// <summary>手动指定的扩展采纳键，例如 <c>6789</c>。</summary>
+    public string ExtendedKeys { get; set; } = "6789";
+
+    /// <summary>浮窗位置：<c>Below</c> 候选窗下方，<c>Left</c> 候选窗左侧。</summary>
+    public string OverlayPlacement { get; set; } = "Below";
+
+    /// <summary>浮窗样式：<c>Card</c> 纯白卡片，<c>Acrylic</c> 亚克力。</summary>
+    public string PopupStyle { get; set; } = "Card";
+
+    /// <summary>英文状态下是否也联想（默认关，采纳会删除已输入的字母）。</summary>
+    public bool EnglishModeAssistEnabled { get; set; }
+
+    /// <summary>英文模式的采纳方式：<c>Replace</c> 删除字母后上屏，<c>Preview</c> 只提示不上屏。</summary>
+    public string EnglishModeCommit { get; set; } = "Replace";
 
     /// <summary>触发云查询的最小输入长度。</summary>
     public int MinQueryLength { get; set; } = 2;

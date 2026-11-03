@@ -61,9 +61,21 @@ internal static class Program
             var shotArg = args.FirstOrDefault(a => a.StartsWith("--shot=", StringComparison.OrdinalIgnoreCase));
             string? shotPath = shotArg is null ? null : shotArg["--shot=".Length..];
 
+            var accept = 0;
+            var acceptArg = args.FirstOrDefault(a => a.StartsWith("--accept=", StringComparison.OrdinalIgnoreCase));
+            if (acceptArg is not null)
+            {
+                var text = acceptArg["--accept=".Length..];
+                accept = text.Equals("oem3", StringComparison.OrdinalIgnoreCase)
+                    ? 0xC0
+                    : text.Length > 0 ? text[0] : 0;
+            }
+
+            var english = args.Any(a => a.Equals("--english", StringComparison.OrdinalIgnoreCase));
+
             var exitCode = isHitTest
                 ? HitTest.Run(_reader, sample, shotPath)
-                : SelfTest.Run(_uiaWorker, _reader, sample, hold, shotPath);
+                : SelfTest.Run(_uiaWorker, _reader, sample, hold, shotPath, accept, english);
 
             _uiaWorker.Dispose();
             return exitCode;

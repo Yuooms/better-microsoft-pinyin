@@ -62,6 +62,25 @@ public struct GuiThreadInfo
 }
 
 /// <summary>
+/// 显示器信息（<c>MONITORINFO</c>）。
+/// </summary>
+[StructLayout(LayoutKind.Sequential)]
+public struct MonitorInfo
+{
+    /// <summary>结构大小，调用前必须赋值。</summary>
+    public int Size;
+
+    /// <summary>显示器矩形（物理像素）。</summary>
+    public NativeRect Monitor;
+
+    /// <summary>工作区矩形（已排除任务栏）。</summary>
+    public NativeRect Work;
+
+    /// <summary>显示器标志。</summary>
+    public uint Flags;
+}
+
+/// <summary>
 /// Win32 原生方法声明。只做声明，不含任何逻辑。
 /// </summary>
 public static class NativeMethods
@@ -375,6 +394,40 @@ public static class NativeMethods
 
     /// <summary>主显示器高度（物理像素）。</summary>
     public static int ScreenHeight => GetSystemMetrics(1);
+
+    /// <summary>取某点所在显示器的工作区（物理像素）。</summary>
+    /// <param name="point">屏幕坐标。</param>
+    /// <returns>工作区矩形；查询失败时退回主屏。</returns>
+    /// <remarks>
+    /// 浮窗定位必须用工作区而不是主屏尺寸：多显示器下主屏尺寸会把位于副屏的浮窗拽回来，
+    /// 而且任务栏占据的区域也应当排除。
+    /// </remarks>
+    public static NativeRect GetWorkArea(NativePoint point)
+    {
+        var monitor = MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+        if (monitor != IntPtr.Zero)
+        {
+            var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
+            if (GetMonitorInfo(monitor, ref info))
+            {
+                return info.Work;
+            }
+        }
+
+        return new NativeRect { Left = 0, Top = 0, Right = ScreenWidth, Bottom = ScreenHeight };
+    }
+
+    /// <summary>取最近显示器（<c>MONITOR_DEFAULTTONEAREST</c>）。</summary>
+    public const uint MONITOR_DEFAULTTONEAREST = 2;
+
+    /// <summary>按屏幕坐标取最近的显示器。</summary>
+    [DllImport("user32.dll")]
+    public static extern IntPtr MonitorFromPoint(NativePoint pt, uint dwFlags);
+
+    /// <summary>取显示器信息。</summary>
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetMonitorInfo(IntPtr hMonitor, ref MonitorInfo lpmi);
 
     /// <summary>DWM 属性：窗口是否被隐身（cloaked）。</summary>
     public const int DWMWA_CLOAKED = 14;

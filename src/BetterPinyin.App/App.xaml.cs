@@ -69,7 +69,9 @@ public partial class App : Application
             _ = StartFeaturesAsync();
 
             // 首次运行（还没有配置文件）直接把设置打开，避免用户以为程序没启动。
-            if (!File.Exists(AppServices.Store.FilePath))
+            // --settings 便于开发时直接进设置页核对界面。
+            if (!File.Exists(AppServices.Store.FilePath) ||
+                e.Args.Any(arg => arg.Equals("--settings", StringComparison.OrdinalIgnoreCase)))
             {
                 ShowSettings();
             }

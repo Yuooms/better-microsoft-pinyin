@@ -1,10 +1,29 @@
 using System.Windows;
 using System.Windows.Interop;
 using BetterPinyin.Contracts;
-using BetterPinyin.Core.Cloud;
+using BetterPinyin.Core.Settings;
 using BetterPinyin.Interop.Windowing;
 
 namespace BetterPinyin.App.Features.CloudAssist;
+
+/// <summary>浮窗里的一行。</summary>
+public sealed class SuggestionRow
+{
+    /// <summary>候选词。</summary>
+    public string Text { get; init; } = string.Empty;
+
+    /// <summary>采纳键文字。</summary>
+    public string KeyLabel { get; init; } = string.Empty;
+
+    /// <summary>字号。</summary>
+    public double TextSize { get; init; } = 13;
+
+    /// <summary>字重。</summary>
+    public string TextWeight { get; init; } = "Normal";
+
+    /// <summary>云图标不透明度，扩展行淡一些。</summary>
+    public double IconOpacity { get; init; } = 1;
+}
 
 /// <summary>
 /// 云候选浮窗。
@@ -16,7 +35,7 @@ namespace BetterPinyin.App.Features.CloudAssist;
 /// 一旦抢走焦点，输入法会立刻提交当前组字。</item>
 /// <item>不挡鼠标：带 <c>WS_EX_TRANSPARENT</c>，点击穿透到下面的窗口。</item>
 /// <item>不遮候选条：候选条位于沉浸式 IME 图层，永远在我们上方，
-/// 因此浮窗只能贴在它下方，空间不够就翻到上方。</item>
+/// 因此浮窗只能贴着它显示。</item>
 /// </list>
 /// </remarks>
 public partial class CloudCandidateWindow : Window
@@ -36,21 +55,34 @@ public partial class CloudCandidateWindow : Window
     }
 
     /// <summary>
-    /// 展示一条云候选。
+    /// 展示若干条云候选。
     /// </summary>
-    /// <param name="suggestion">候选。</param>
+    /// <param name="slots">按「严格 → 扩展」排列的行。</param>
     /// <param name="snapshot">候选窗快照；不可用时退回插入符定位。</param>
-    /// <param name="keyHint">采纳键提示文本。</param>
-    /// <param name="showCloudIcon">是否显示云图标。</param>
-    public void ShowSuggestion(
-        CloudSuggestion suggestion,
+    /// <param name="englishMode">是否来自英文模式（英文模式只提示，不改样式）。</param>
+    /// <param name="settings">设置，用于读取位置。</param>
+    internal void ShowSuggestions(
+        IReadOnlyList<SlotDescriptor> slots,
         CandidateWindowSnapshot snapshot,
-        string keyHint,
-        bool showCloudIcon)
+        bool englishMode,
+        AppSettings settings)
     {
-        CandidateText.Text = suggestion.Text;
-        KeyHint.Text = keyHint;
-        CloudGlyph.Visibility = showCloudIcon ? Visibility.Visible : Visibility.Collapsed;
+        var rows = new SuggestionRow[slots.Count];
+        for (var i = 0; i < slots.Count; i++)
+        {
+            var slot = slots[i];
+            var isStrict = slot.Slot == SuggestionSlot.Strict;
+            rows[i] = new SuggestionRow
+            {
+                Text = slot.Text,
+                KeyLabel = slot.KeyLabel,
+                TextSize = isStrict ? 15 : 13,
+                TextWeight = isStrict ? "SemiBold" : "Normal",
+                IconOpacity = isStrict ? 1.0 : 0.5,
+            };
+        }
+
+        Rows.ItemsSource = rows;
 
         if (!IsVisible)
         {
@@ -60,7 +92,7 @@ public partial class CloudCandidateWindow : Window
 
         // 让布局立即完成，否则 ActualWidth/Height 还是 0，位置会算错。
         UpdateLayout();
-        Position(snapshot);
+        Position(snapshot, englishMode ? "Below" : settings.OverlayPlacement);
     }
 
     /// <summary>隐藏浮窗。</summary>
@@ -72,7 +104,7 @@ public partial class CloudCandidateWindow : Window
         }
     }
 
-    private void Position(CandidateWindowSnapshot snapshot)
+    private void Position(CandidateWindowSnapshot snapshot, string placement)
     {
         var handle = new WindowInteropHelper(this).Handle;
         if (handle == IntPtr.Zero)
@@ -88,12 +120,14 @@ public partial class CloudCandidateWindow : Window
         int anchorLeft;
         int anchorTop;
         int anchorBottom;
+        var anchorHeight = 22;
 
         if (snapshot.IsVisible)
         {
             anchorLeft = snapshot.Left;
             anchorTop = snapshot.Top;
             anchorBottom = snapshot.Bottom;
+            anchorHeight = Math.Max(snapshot.Height, 22);
         }
         else
         {
@@ -103,27 +137,48 @@ public partial class CloudCandidateWindow : Window
             anchorBottom = caret.Y;
         }
 
-        var x = anchorLeft;
-        var y = anchorBottom + GapPixels;
+        var work = NativeMethods.GetWorkArea(new NativePoint { X = anchorLeft, Y = anchorBottom });
 
-        var screenRight = NativeMethods.ScreenWidth;
-        var screenBottom = NativeMethods.ScreenHeight;
+        int x;
+        int y;
+
+        if (string.Equals(placement, "Left", StringComparison.OrdinalIgnoreCase))
+        {
+            // 贴候选窗左侧、纵向居中；左边放不下就翻到下方。
+            x = anchorLeft - width - GapPixels;
+            y = anchorTop + ((anchorHeight - height) / 2);
+            if (x < work.Left)
+            {
+                x = anchorLeft;
+                y = anchorBottom + GapPixels;
+            }
+        }
+        else
+        {
+            x = anchorLeft;
+            y = anchorBottom + GapPixels;
+        }
 
         // 下方放不下就翻到上方；再放不下就贴底。
-        if (y + height > screenBottom)
+        if (y + height > work.Bottom)
         {
             var above = anchorTop - height - GapPixels;
-            y = above >= 0 ? above : Math.Max(0, screenBottom - height);
+            y = above >= work.Top ? above : Math.Max(work.Top, work.Bottom - height);
         }
 
-        if (x + width > screenRight)
+        if (x + width > work.Right)
         {
-            x = Math.Max(0, screenRight - width);
+            x = Math.Max(work.Left, work.Right - width);
         }
 
-        if (x < 0)
+        if (x < work.Left)
         {
-            x = 0;
+            x = work.Left;
+        }
+
+        if (y < work.Top)
+        {
+            y = work.Top;
         }
 
         NativeMethods.SetWindowPos(

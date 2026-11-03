@@ -55,13 +55,9 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
     {
         _window = new CloudCandidateWindow();
 
-        _controller.SuggestionReady += OnSuggestionReady;
-        _controller.SuggestionCleared += OnSuggestionCleared;
-
-        if (!_controller.Start())
-        {
-            return Task.CompletedTask;
-        }
+        _controller.SuggestionsReady += OnSuggestionsReady;
+        _controller.SuggestionsCleared += OnSuggestionsCleared;
+        _controller.Start();
 
         AppServices.Controller = _controller;
         return Task.CompletedTask;
@@ -70,8 +66,8 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
     /// <inheritdoc />
     public Task StopAsync()
     {
-        _controller.SuggestionReady -= OnSuggestionReady;
-        _controller.SuggestionCleared -= OnSuggestionCleared;
+        _controller.SuggestionsReady -= OnSuggestionsReady;
+        _controller.SuggestionsCleared -= OnSuggestionsCleared;
         _controller.Stop();
 
         if (_window is not null)
@@ -99,29 +95,17 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
         _controller.Dispose();
     }
 
-    private void OnSuggestionReady(object? sender, CloudSuggestionShownEventArgs e)
+    private void OnSuggestionsReady(object? sender, CloudSuggestionsShownEventArgs e)
     {
         // 事件来自后台线程，必须切回 UI 线程操作窗口。
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
-            _window?.ShowSuggestion(
-                e.Suggestion,
-                e.Anchor,
-                DescribeAcceptKey(_settings.AcceptKey),
-                _settings.ShowCloudIcon);
+            _window?.ShowSuggestions(e.Slots, e.Anchor, e.EnglishMode, _settings);
         });
     }
 
-    private void OnSuggestionCleared(object? sender, EventArgs e)
+    private void OnSuggestionsCleared(object? sender, EventArgs e)
     {
         Application.Current?.Dispatcher.BeginInvoke(() => _window?.HideSuggestion());
     }
-
-    private static string DescribeAcceptKey(string key) => key switch
-    {
-        "Semicolon" => ";",
-        "Backquote" => "`",
-        "Comma" => ",",
-        _ => "Tab",
-    };
 }

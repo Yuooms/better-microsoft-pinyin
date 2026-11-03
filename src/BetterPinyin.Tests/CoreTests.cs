@@ -313,17 +313,23 @@ internal static class CoreTests
             var store = new SettingsStore(path);
             var defaults = store.Load();
             Check.True(defaults.CloudAssistEnabled, "默认应启用云联想");
-            Check.Equal("Tab", defaults.AcceptKey, "默认采纳键应为 Tab");
+            Check.True(defaults.StrictEnabled, "默认应启用云联想（严格）");
+            Check.True(defaults.ExtendedEnabled, "默认应启用扩展云联想");
+            Check.Equal("Oem3", defaults.StrictAcceptKey, "默认采纳键应为 ·");
+            Check.Equal(3, defaults.ExtendedMaxCount, "扩展默认 3 条");
+            Check.True(!defaults.EnglishModeAssistEnabled, "英文模式默认关闭");
             Check.True(store.LastError is null, "文件不存在时不应报错");
 
-            defaults.AcceptKey = "Semicolon";
-            defaults.MaxSuggestions = 3;
+            defaults.StrictAcceptKey = "Semicolon";
+            defaults.ExtendedMaxCount = 2;
+            defaults.OverlayPlacement = "Left";
             defaults.BlockedProcesses.Add("mstsc");
             Check.True(store.Save(defaults), "保存应成功");
 
             var reloaded = new SettingsStore(path).Load();
-            Check.Equal("Semicolon", reloaded.AcceptKey, "采纳键应持久化");
-            Check.Equal(3, reloaded.MaxSuggestions, "候选数量应持久化");
+            Check.Equal("Semicolon", reloaded.StrictAcceptKey, "采纳键应持久化");
+            Check.Equal(2, reloaded.ExtendedMaxCount, "扩展条数应持久化");
+            Check.Equal("Left", reloaded.OverlayPlacement, "浮窗位置应持久化");
             Check.Contains(reloaded.BlockedProcesses, "mstsc", "黑名单应持久化");
 
             File.WriteAllText(path, "{ 这不是合法 JSON");

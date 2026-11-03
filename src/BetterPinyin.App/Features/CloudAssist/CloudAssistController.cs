@@ -5,43 +5,36 @@ using BetterPinyin.Core.Ranking;
 using BetterPinyin.Core.Settings;
 using BetterPinyin.Interop.Ime;
 using BetterPinyin.Interop.Input;
+using BetterPinyin.Interop.Uia;
 using BetterPinyin.Interop.Windowing;
 
 namespace BetterPinyin.App.Features.CloudAssist;
 
-/// <summary>云候选已就绪，需要浮窗展示。</summary>
-internal sealed class CloudSuggestionShownEventArgs : EventArgs
+/// <summary>浮窗要展示的内容。</summary>
+internal sealed class CloudSuggestionsShownEventArgs : EventArgs
 {
-    public CloudSuggestionShownEventArgs(
-        CloudSuggestion suggestion,
-        CandidateWindowSnapshot anchor,
-        bool anchorFromCandidateWindow)
-    {
-        Suggestion = suggestion;
-        Anchor = anchor;
-        AnchorFromCandidateWindow = anchorFromCandidateWindow;
-    }
+    /// <summary>按「严格 → 扩展」排列的渲染行。</summary>
+    public required IReadOnlyList<SlotDescriptor> Slots { get; init; }
 
-    /// <summary>要展示的候选。</summary>
-    public CloudSuggestion Suggestion { get; }
+    /// <summary>候选窗快照，用于定位。</summary>
+    public required CandidateWindowSnapshot Anchor { get; init; }
 
-    /// <summary>候选窗快照（贴在它下方）。</summary>
-    public CandidateWindowSnapshot Anchor { get; }
-
-    /// <summary>锚点是否来自候选窗（否则需要退回插入符定位）。</summary>
-    public bool AnchorFromCandidateWindow { get; }
+    /// <summary>是否来自英文模式（英文模式的浮窗文案不同）。</summary>
+    public bool EnglishMode { get; init; }
 }
 
 /// <summary>
-/// 云联想的编排器：把「按键 → 查云端 → 排序 → 展示 → 采纳上屏」串起来。
+/// 云联想主控。
 /// </summary>
 /// <remarks>
-/// 线程模型：
-/// <list type="bullet">
-/// <item>键盘钩子回调在安装了钩子的线程（UI 线程）上执行，只做过滤与转交，绝不做 I/O。</item>
-/// <item>云端查询在后台线程，结果回投时需要校验组字代次，代次不符直接丢弃。</item>
-/// <item>UIA 读取通过 <see cref="Interop.Uia.UiaWorker"/> 串行化到专用 STA 线程并带超时。</item>
-/// </list>
+/// <para>
+/// 数据流：键盘钩子 → 重建拼音串 → 防抖 → 读候选窗判断输入状态 → 查云端 → 清洗 →
+/// 按读音分区（严格 / 扩展）→ 分配采纳键 → 浮窗 → 按键上屏。
+/// </para>
+/// <para>
+/// 钩子回调运行在输入线程上，里面只做位运算与数组查找：不读 UIA、不发网络、不加锁。
+/// 需要跨线程共享的状态全部用 <see cref="Volatile"/> 读写；引用赋值本身是原子的。
+/// </para>
 /// </remarks>
 internal sealed class CloudAssistController : IDisposable
 {
@@ -49,14 +42,29 @@ internal sealed class CloudAssistController : IDisposable
 
     private readonly AppSettings _settings;
     private readonly BingSuggestionClient _client;
-    private CandidateRanker _ranker;
     private readonly LowLevelKeyboardHook _hook = new();
     private readonly CompositionTracker _tracker = new();
 
+    /// <summary>本次按键序列里已被吞掉的键，抬起时也要吞掉，避免目标窗口收到孤立 keyup。</summary>
+    private readonly HashSet<int> _swallowUntilKeyUp = new();
+
+    private PinyinMatcher _matcher;
     private CancellationTokenSource? _debounceSource;
+
+    private ActivationMap _map = ActivationMap.Empty;
+    private SuggestionSet? _current;
     private IntPtr _candidateHandle;
+    private IntPtr _currentForeground;
+    private AnchorPoint _currentCaret;
+    private string _currentQuery = string.Empty;
+    private long _currentVersion;
+    private InputMode _currentMode;
+    private int _acceptInProgress;
+    private long _acceptGeneration;
     private bool _disposed;
 
+    /// <summary>创建控制器。</summary>
+    /// <param name="settings">设置。</param>
     public CloudAssistController(AppSettings settings)
     {
         _settings = settings;
@@ -64,34 +72,33 @@ internal sealed class CloudAssistController : IDisposable
             Http.Client,
             settings.Market,
             timeoutMilliseconds: settings.RequestTimeoutMs);
-        _ranker = new CandidateRanker(new PinyinMatcher(fuzzyEnabled: settings.FuzzyPinyin), settings.MaxSuggestions);
+        _matcher = AppServices.CreateMatcher();
     }
 
-    /// <summary>云候选就绪。</summary>
-    public event EventHandler<CloudSuggestionShownEventArgs>? SuggestionReady;
+    /// <summary>有新的候选可展示。</summary>
+    public event EventHandler<CloudSuggestionsShownEventArgs>? SuggestionsReady;
 
-    /// <summary>云候选应被清除。</summary>
-    public event EventHandler? SuggestionCleared;
+    /// <summary>候选应当隐藏。</summary>
+    public event EventHandler? SuggestionsCleared;
 
-    /// <summary>诊断消息，供设置页实时展示。</summary>
+    /// <summary>诊断信息。</summary>
     public event EventHandler<string>? Diagnostics;
 
-    /// <summary>是否正在运行。</summary>
+    /// <summary>钩子是否已安装。</summary>
     public bool IsRunning { get; private set; }
 
-    /// <summary>当前展示中的候选。</summary>
-    public CloudSuggestion? Current { get; private set; }
+    /// <summary>当前展示的分区结果。</summary>
+    public SuggestionSet? Current => _current;
 
-    /// <summary>最近一次处理的输入串。</summary>
+    /// <summary>最近一次输入串，供诊断展示。</summary>
     public string LastQuery { get; private set; } = string.Empty;
 
-    /// <summary>启动：安装键盘钩子并接管组字变化。</summary>
-    /// <returns>成功返回 true。</returns>
-    public bool Start()
+    /// <summary>启动：装钩子、订阅状态机。</summary>
+    public void Start()
     {
         if (IsRunning)
         {
-            return true;
+            return;
         }
 
         _tracker.CompositionChanged += OnCompositionChanged;
@@ -101,43 +108,37 @@ internal sealed class CloudAssistController : IDisposable
         try
         {
             _hook.Start();
+            IsRunning = true;
+            Report("已启动，等待输入");
         }
         catch (Exception ex)
         {
-            Report($"键盘钩子安装失败：{ex.Message}");
             _hook.KeyEvent -= OnKeyEvent;
-            return false;
+            _tracker.CompositionChanged -= OnCompositionChanged;
+            _tracker.CompositionEnded -= OnCompositionEnded;
+            Report($"键盘钩子安装失败：{ex.Message}");
         }
-
-        IsRunning = true;
-        Report("云联想已启动");
-        return true;
     }
 
-    /// <summary>停止并卸载钩子。</summary>
+    /// <summary>停止。</summary>
     public void Stop()
     {
-        if (!IsRunning)
-        {
-            return;
-        }
-
         _hook.Dispose();
         _hook.KeyEvent -= OnKeyEvent;
         _tracker.CompositionChanged -= OnCompositionChanged;
         _tracker.CompositionEnded -= OnCompositionEnded;
+
         CancelPendingQuery();
         Clear();
         IsRunning = false;
-        Report("云联想已停止");
     }
 
-    /// <summary>设置变更后调用，使排序参数与词源配置即时生效。</summary>
+    /// <summary>设置变更后重新装配匹配器并清空当前结果。</summary>
     public void ApplySettings()
     {
-        _ranker = new CandidateRanker(
-            new PinyinMatcher(fuzzyEnabled: _settings.FuzzyPinyin),
-            _settings.MaxSuggestions);
+        _matcher = AppServices.CreateMatcher();
+        CancelPendingQuery();
+        Clear();
     }
 
     /// <inheritdoc />
@@ -155,40 +156,56 @@ internal sealed class CloudAssistController : IDisposable
 
     private void OnKeyEvent(object? sender, KeyboardHookEventArgs e)
     {
+        // 本程序自己注入的按键（Esc、上屏文本、回填的数字）不参与任何判断。
+        if (e.IsOwnInjection)
+        {
+            return;
+        }
+
         if (!e.IsKeyDown)
         {
+            if (_swallowUntilKeyUp.Remove(e.VirtualKey))
+            {
+                e.Handled = true;
+            }
+
             return;
         }
 
-        // 采纳键只在我们确实有候选可采纳时才吞掉，其余情况一律放行。
-        if (Current is not null && !e.IsInjected && IsAcceptKey(e.VirtualKey))
+        // 提交过程中按住不放产生的自动重复，继续吞掉，否则正文会冒出 666。
+        if (Volatile.Read(ref _acceptInProgress) != 0 && _swallowUntilKeyUp.Contains(e.VirtualKey))
         {
             e.Handled = true;
-            var suggestion = Current;
-            Clear();
-            _ = CommitAsync(suggestion);
             return;
         }
 
-        var modifiers = ModifierKeys.None;
-        if ((NativeMethods.GetAsyncKeyState(0x10) & 0x8000) != 0)
-        {
-            modifiers |= ModifierKeys.Shift;
-        }
+        var modifiers = ReadModifiers();
+        var map = Volatile.Read(ref _map);
 
-        if (NativeMethods.IsCtrlDown)
+        if (modifiers == ModifierKeys.None && map.Count > 0 && map.TryGet(e.VirtualKey, out var target))
         {
-            modifiers |= ModifierKeys.Control;
-        }
+            e.Handled = true;
+            _swallowUntilKeyUp.Add(e.VirtualKey);
 
-        if (NativeMethods.IsAltDown)
-        {
-            modifiers |= ModifierKeys.Alt;
-        }
+            var generation = Interlocked.Increment(ref _acceptGeneration);
+            Volatile.Write(ref _map, ActivationMap.Empty);
+            Volatile.Write(ref _acceptInProgress, 1);
 
-        if (NativeMethods.IsWinDown)
-        {
-            modifiers |= ModifierKeys.Windows;
+            var query = _currentQuery;
+            var version = _currentVersion;
+            var handle = _candidateHandle;
+            var foreground = _currentForeground;
+            var caret = _currentCaret;
+            var mode = _currentMode;
+
+            // 先关浮窗再上屏；句柄等字段都在上面取过副本，不会因为 Clear 而丢失。
+            // 注意不要在这里 Reset：Reset 会递增代次，上屏前的“组字是否变化”校验就永远失败。
+            Clear();
+
+            _ = mode == InputMode.English
+                ? CommitEnglishAsync(target, query, version, foreground, caret, generation)
+                : CommitAsync(target, query, version, handle, generation);
+            return;
         }
 
         _tracker.Feed(e.VirtualKey, e.IsKeyDown, modifiers, e.IsOwnInjection);
@@ -198,7 +215,12 @@ internal sealed class CloudAssistController : IDisposable
     {
         LastQuery = e.RawInput;
 
-        if (!_settings.CloudAssistEnabled || _settings.DoublePinyinMode)
+        // 输入变了，旧映射立刻作废：浮窗还留在屏幕上，但那一刻按采纳键不应再生效。
+        Volatile.Write(ref _map, ActivationMap.Empty);
+
+        if (!_settings.CloudAssistEnabled ||
+            _settings.DoublePinyinMode ||
+            (!_settings.StrictEnabled && !_settings.ExtendedEnabled))
         {
             Clear();
             return;
@@ -210,7 +232,6 @@ internal sealed class CloudAssistController : IDisposable
             return;
         }
 
-        // 输入还在继续，先把上一次未返回的查询取消掉，避免旧结果覆盖新输入。
         CancelPendingQuery();
         var source = new CancellationTokenSource();
         _debounceSource = source;
@@ -244,14 +265,45 @@ internal sealed class CloudAssistController : IDisposable
 
         try
         {
-            var rawItems = await _client.GetSuggestionsAsync(raw, cancellationToken).ConfigureAwait(false);
+            // 先读候选窗：它既决定浮窗锚点，也是「当前是否真在组字」的唯一可靠信号。
+            // 英文模式下不发请求，省一次往返。
+            var anchorPoint = CaretLocator.GetAnchor();
+            var snapshot = AppServices.Reader.ReadBest(anchorPoint, 120);
 
             if (cancellationToken.IsCancellationRequested || version != _tracker.Version)
             {
                 return;
             }
 
-            var cleaned = ResultSanitizer.Sanitize(rawItems, raw);
+            var mode = InputModeResolver.Resolve(snapshot, raw, _settings);
+            if (mode == InputMode.None)
+            {
+                Report($"{raw}：当前不是可联想的输入状态");
+                Clear();
+                return;
+            }
+
+            var requests = BuildQueries(raw);
+            var rawItems = new List<string>(16);
+
+            foreach (var request in requests)
+            {
+                var items = await _client.GetSuggestionsAsync(request, cancellationToken).ConfigureAwait(false);
+                rawItems.AddRange(items);
+
+                if (cancellationToken.IsCancellationRequested || version != _tracker.Version)
+                {
+                    return;
+                }
+
+                // 简拼展开可能有多个全拼串，第一个有结果就不再往下查，控制延迟。
+                if (items.Count > 0)
+                {
+                    break;
+                }
+            }
+
+            var cleaned = ResultSanitizer.Sanitize(rawItems, raw, SanitizeOptions.Extended);
             if (cleaned.Count == 0)
             {
                 Report($"{raw}：云端无可用候选（原始 {rawItems.Count} 条均被过滤）");
@@ -259,36 +311,55 @@ internal sealed class CloudAssistController : IDisposable
                 return;
             }
 
-            // 读本地候选用于去重；同时拿到候选窗矩形作为浮窗锚点。
-            var anchor = CaretLocator.GetAnchor();
-            var snapshot = AppServices.Reader.ReadBest(anchor, 220);
-
-            if (cancellationToken.IsCancellationRequested || version != _tracker.Version)
-            {
-                return;
-            }
-
             var local = snapshot.Items.Select(i => i.Text).ToList();
-            var ranked = _ranker.Rank(raw, cleaned, local, _client.LastEndpointId ?? "bing");
+            var options = new SuggestionSelectionOptions(
+                StrictEnabled: _settings.StrictEnabled,
+                StrictDedupeLocal: _settings.StrictDedupeLocal,
+                ExtendedEnabled: _settings.ExtendedEnabled,
+                ExtendedMaxCount: Math.Clamp(_settings.ExtendedMaxCount, 1, 4));
 
-            if (ranked.Count == 0)
+            var set = SuggestionSelector.Select(
+                raw,
+                cleaned,
+                local,
+                _matcher,
+                options,
+                snapshot.Items.Count,
+                snapshot.Quality == CandidateReadQuality.Exact,
+                _client.LastEndpointId ?? "bing");
+
+            var extendedKeys = ResolveExtendedKeys(set, snapshot);
+            var strictKey = KeyNames.Resolve(_settings.StrictAcceptKey);
+            var (map, slots) = ActivationMap.Build(set, strictKey, extendedKeys);
+
+            if (slots.Count == 0)
             {
-                Report($"{raw}：{cleaned.Count} 条候选均已在本地区命中或读音不符");
+                Report($"{raw}：{set.Diagnostic}");
                 Clear();
                 return;
             }
 
-            Current = ranked[0];
-            _candidateHandle = snapshot.IsVisible
-                ? AppServices.Reader.LocateNear(anchor)
-                : IntPtr.Zero;
+            _current = set;
+            _currentQuery = raw;
+            _currentVersion = version;
+            _currentMode = mode;
+            _currentForeground = NativeMethods.GetForegroundWindow();
+            _currentCaret = anchorPoint;
+            _candidateHandle = snapshot.IsVisible ? AppServices.Reader.LocateNear(anchorPoint) : IntPtr.Zero;
 
-            Report($"{raw} → {Current.Text}（来源 {_client.LastEndpointId ?? "-"}，" +
+            Volatile.Write(ref _map, map);
+
+            Report($"{raw} → {set.Diagnostic}（来源 {_client.LastEndpointId ?? "-"}，" +
                    $"锚点 {(snapshot.IsVisible ? "候选窗" : "插入符")}）");
 
-            SuggestionReady?.Invoke(
+            SuggestionsReady?.Invoke(
                 this,
-                new CloudSuggestionShownEventArgs(Current, snapshot, snapshot.IsVisible));
+                new CloudSuggestionsShownEventArgs
+                {
+                    Slots = slots,
+                    Anchor = snapshot,
+                    EnglishMode = mode == InputMode.English,
+                });
         }
         catch (OperationCanceledException)
         {
@@ -300,11 +371,98 @@ internal sealed class CloudAssistController : IDisposable
         }
     }
 
-    private async Task CommitAsync(CloudSuggestion suggestion)
+    /// <summary>
+    /// 决定这次要查什么。
+    /// </summary>
+    /// <remarks>
+    /// 全拼直接用原串；简拼（无法完整切分且词库能展开）先展开成全拼再查——
+    /// 直接把 <c>ystl</c> 丢给 Bing 只会拿到拉丁垃圾。
+    /// </remarks>
+    private IReadOnlyList<string> BuildQueries(string raw)
+    {
+        if (!AppServices.Lexicon.IsLoaded)
+        {
+            return new[] { raw };
+        }
+
+        if (SyllableTable.Default.TrySegment(raw, _settings.FuzzyPinyin, out var syllables) && syllables >= 2)
+        {
+            return new[] { raw };
+        }
+
+        var expansions = AppServices.Lexicon.ExpandAbbreviation(raw, 2);
+        return expansions.Count > 0 ? expansions : new[] { raw };
+    }
+
+    /// <summary>
+    /// 分配扩展槽的采纳键。
+    /// </summary>
+    /// <remarks>
+    /// 自动模式接在本地候选之后：本地显示 5 个就用 6/7/8。读不到候选数时退回 6/7/8，
+    /// 并在提交前复核——万一那个编号其实是本地候选，就把按键还回去。
+    /// </remarks>
+    private IReadOnlyList<int> ResolveExtendedKeys(in SuggestionSet set, in CandidateWindowSnapshot snapshot)
+    {
+        if (set.Extended.Count == 0)
+        {
+            return Array.Empty<int>();
+        }
+
+        var max = Math.Clamp(_settings.ExtendedMaxCount, 1, 4);
+
+        if (string.Equals(_settings.ExtendedKeyMode, "Manual", StringComparison.OrdinalIgnoreCase))
+        {
+            var manual = KeyNames.ParseDigits(_settings.ExtendedKeys);
+            return manual.Take(max).ToArray();
+        }
+
+        var localCount = snapshot.Quality == CandidateReadQuality.Exact && snapshot.Items.Count > 0
+            ? snapshot.Items.Count
+            : 5;
+
+        var keys = new List<int>(max);
+        for (var i = 0; i < max; i++)
+        {
+            var digit = localCount + 1 + i;
+            if (digit > 9)
+            {
+                break;
+            }
+
+            keys.Add('0' + digit);
+        }
+
+        return keys;
+    }
+
+    private async Task CommitAsync(
+        ActivationTarget target,
+        string query,
+        long version,
+        IntPtr handle,
+        long generation)
     {
         try
         {
-            var handle = _candidateHandle;
+            // 数字键复核：吞键到提交之间可能有几百毫秒，期间输入法可能补上了新候选。
+            if (target.DigitThreshold > 0)
+            {
+                var fresh = AppServices.Reader.ReadBest(CaretLocator.GetAnchor(), 80);
+                if (fresh.Quality != CandidateReadQuality.Exact ||
+                    fresh.Items.Count >= target.DigitThreshold)
+                {
+                    ReplayKey(target.VirtualKey);
+                    Report($"回填：本地候选数变为 {fresh.Items.Count}，" +
+                           $"{KeyNames.Describe(target.VirtualKey)} 已还给输入法");
+                    return;
+                }
+            }
+
+            if (generation != Volatile.Read(ref _acceptGeneration) || _tracker.Version != version)
+            {
+                Report("放弃：组字已变化");
+                return;
+            }
 
             // 先取消组字，否则拼音会和中文一起上屏。
             KeySender.SendVirtualKey(0x1B);
@@ -314,20 +472,20 @@ internal sealed class CloudAssistController : IDisposable
                 KeySender.SendVirtualKey(0x1B);
                 if (!await WaitCandidateGoneAsync(handle, 100).ConfigureAwait(false))
                 {
-                    Report($"上屏中止：组字未被取消（{suggestion.Text}）");
+                    Report($"上屏中止：组字未被取消（{target.Suggestion.Text}）");
                     return;
                 }
             }
 
             await Task.Delay(20).ConfigureAwait(false);
 
-            if (KeySender.SendUnicodeText(suggestion.Text))
+            if (KeySender.SendUnicodeText(target.Suggestion.Text))
             {
-                Report($"已上屏：{suggestion.Text}");
+                Report($"已上屏：{target.Suggestion.Text}");
             }
             else
             {
-                Report($"上屏失败：{suggestion.Text}");
+                Report($"上屏失败：{target.Suggestion.Text}");
             }
         }
         catch (Exception ex)
@@ -337,8 +495,92 @@ internal sealed class CloudAssistController : IDisposable
         finally
         {
             _tracker.Reset();
-            _candidateHandle = IntPtr.Zero;
+            Volatile.Write(ref _acceptInProgress, 0);
         }
+    }
+
+    /// <summary>
+    /// 英文模式上屏：字母已经进了文档，必须先删再写。
+    /// </summary>
+    /// <remarks>
+    /// 这是全项目最危险的一段代码，所有护栏缺一不可：组字代次未变、前台窗口未变、
+    /// 插入符没移动、并且能用 UIA 读到「最后 N 个字符就是刚才输入的串」。
+    /// 任何一项不满足都放弃，宁可不上屏也不删正文。
+    /// </remarks>
+    private async Task CommitEnglishAsync(
+        ActivationTarget target,
+        string query,
+        long version,
+        IntPtr foreground,
+        AnchorPoint caret,
+        long generation)
+    {
+        try
+        {
+            if (!string.Equals(_settings.EnglishModeCommit, "Replace", StringComparison.OrdinalIgnoreCase))
+            {
+                Report($"英文模式仅提示，未上屏：{target.Suggestion.Text}");
+                return;
+            }
+
+            if (generation != Volatile.Read(ref _acceptGeneration) || _tracker.Version != version)
+            {
+                Report("放弃：输入已变化");
+                return;
+            }
+
+            if (NativeMethods.GetForegroundWindow() != foreground)
+            {
+                Report("放弃：前台窗口已切换");
+                return;
+            }
+
+            var current = CaretLocator.GetAnchor();
+            if (Math.Abs(current.X - caret.X) > 2 || Math.Abs(current.Y - caret.Y) > 2)
+            {
+                Report("放弃：插入符位置已变化");
+                return;
+            }
+
+            var tail = AppServices.Reader.ReadFocusedValueTail(query.Length);
+            if (tail is null || !tail.Equals(query, StringComparison.OrdinalIgnoreCase))
+            {
+                Report($"放弃：无法确认已输入内容（读到 {tail ?? "空"}）");
+                return;
+            }
+
+            for (var i = 0; i < query.Length; i++)
+            {
+                KeySender.SendVirtualKey(0x08); // Backspace
+            }
+
+            await Task.Delay(20).ConfigureAwait(false);
+
+            if (KeySender.SendUnicodeText(target.Suggestion.Text))
+            {
+                Report($"已替换上屏：{target.Suggestion.Text}");
+            }
+            else
+            {
+                Report($"上屏失败：{target.Suggestion.Text}");
+            }
+        }
+        catch (Exception ex)
+        {
+            Report($"英文模式上屏异常：{ex.GetType().Name} {ex.Message}");
+        }
+        finally
+        {
+            _tracker.Reset();
+            Volatile.Write(ref _acceptInProgress, 0);
+        }
+    }
+
+    private void ReplayKey(int virtualKey)
+    {
+        KeySender.SendVirtualKey((ushort)virtualKey);
+        _tracker.Reset();
+        Volatile.Write(ref _acceptInProgress, 0);
     }
 
     private async Task<bool> WaitCandidateGoneAsync(IntPtr handle, int timeoutMilliseconds)
@@ -364,13 +606,31 @@ internal sealed class CloudAssistController : IDisposable
         return false;
     }
 
-    private bool IsAcceptKey(int virtualKey) => _settings.AcceptKey switch
+    private static ModifierKeys ReadModifiers()
     {
-        "Semicolon" => virtualKey == 0xBA,
-        "Backquote" => virtualKey == 0xC0,
-        "Comma" => virtualKey == 0xBC,
-        _ => virtualKey == 0x09,
-    };
+        var modifiers = ModifierKeys.None;
+        if ((NativeMethods.GetAsyncKeyState(0x10) & 0x8000) != 0)
+        {
+            modifiers |= ModifierKeys.Shift;
+        }
+
+        if (NativeMethods.IsCtrlDown)
+        {
+            modifiers |= ModifierKeys.Control;
+        }
+
+        if (NativeMethods.IsAltDown)
+        {
+            modifiers |= ModifierKeys.Alt;
+        }
+
+        if (NativeMethods.IsWinDown)
+        {
+            modifiers |= ModifierKeys.Windows;
+        }
+
+        return modifiers;
+    }
 
     private static bool IsOwnProcessForeground()
     {
@@ -439,14 +699,16 @@ internal sealed class CloudAssistController : IDisposable
 
     private void Clear()
     {
-        if (Current is null)
+        Volatile.Write(ref _map, ActivationMap.Empty);
+        _candidateHandle = IntPtr.Zero;
+
+        if (_current is null)
         {
             return;
         }
 
-        Current = null;
-        _candidateHandle = IntPtr.Zero;
-        SuggestionCleared?.Invoke(this, EventArgs.Empty);
+        _current = null;
+        SuggestionsCleared?.Invoke(this, EventArgs.Empty);
     }
 
     private void Report(string message)

@@ -130,6 +130,68 @@ public sealed class UiaCandidateWindowReader
     }
 
     /// <summary>
+    /// 读取当前焦点控件文本的最后若干个字符。
+    /// </summary>
+    /// <param name="count">要读取的字符数。</param>
+    /// <returns>文本尾部；控件不支持 ValuePattern 或文本过短时返回 null。</returns>
+    /// <remarks>
+    /// 英文模式采纳时要先删掉已经上屏的字母，删之前必须确认这段文本确实是用户刚打的，
+    /// 否则会删掉正文。ValuePattern 只读不写，比 TextPattern 的接口面小得多，
+    /// 失败时一律返回 null，调用方据此放弃上屏。
+    /// </remarks>
+    public string? ReadFocusedValueTail(int count)
+    {
+        if (_automation is null || count <= 0)
+        {
+            return null;
+        }
+
+        var automation = _automation;
+        return _worker.Invoke(
+            () => ReadFocusedValueTailCore(automation, count),
+            timeoutMilliseconds: 400,
+            fallback: null);
+    }
+
+    private static string? ReadFocusedValueTailCore(IUIAutomation automation, int count)
+    {
+        IntPtr patternPointer = IntPtr.Zero;
+
+        try
+        {
+            if (automation.GetFocusedElement(out var focused) != 0 || focused is null)
+            {
+                return null;
+            }
+
+            if (focused.GetCurrentPattern(UiaInterop.ValuePatternId, out patternPointer) != 0 ||
+                patternPointer == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            var pattern = (IUIAutomationValuePattern)Marshal.GetObjectForIUnknown(patternPointer);
+            if (pattern.get_CurrentValue(out var value) != 0 || string.IsNullOrEmpty(value))
+            {
+                return null;
+            }
+
+            return value.Length >= count ? value[^count..] : null;
+        }
+        catch (Exception ex) when (ex is COMException or InvalidCastException or NotSupportedException)
+        {
+            return null;
+        }
+        finally
+        {
+            if (patternPointer != IntPtr.Zero)
+            {
+                Marshal.Release(patternPointer);
+            }
+        }
+    }
+
+    /// <summary>
     /// 在锚点附近查找候选窗并读取内容，带重试（候选条可能比按键晚几十毫秒出现）。
     /// </summary>
     /// <param name="anchor">锚点（屏幕坐标）。</param>

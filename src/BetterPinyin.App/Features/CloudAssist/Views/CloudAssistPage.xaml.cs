@@ -11,7 +11,7 @@ namespace BetterPinyin.App.Features.CloudAssist.Views;
 /// <remarks>
 /// 直接读写 <see cref="AppSettings"/>，不做 ViewModel 层的双向绑定：
 /// 这个页面只有十几个控件，显式赋值比搭一套绑定基础设施更易读、更少出错，
-/// 也让"点保存才生效"的语义一目了然。
+/// 也让「点保存才生效」的语义一目了然。
 /// </remarks>
 public partial class CloudAssistPage : UserControl
 {
@@ -62,28 +62,51 @@ public partial class CloudAssistPage : UserControl
     private void LoadFromSettings()
     {
         EnabledCheckBox.IsChecked = Settings.CloudAssistEnabled;
-        DoublePinyinCheckBox.IsChecked = Settings.DoublePinyinMode;
+        StrictCheckBox.IsChecked = Settings.StrictEnabled;
+        StrictDedupeCheckBox.IsChecked = Settings.StrictDedupeLocal;
+        ExtendedCheckBox.IsChecked = Settings.ExtendedEnabled;
         ShowCloudIconCheckBox.IsChecked = Settings.ShowCloudIcon;
         FuzzyCheckBox.IsChecked = Settings.FuzzyPinyin;
+        DoublePinyinCheckBox.IsChecked = Settings.DoublePinyinMode;
+        EnglishCheckBox.IsChecked = Settings.EnglishModeAssistEnabled;
 
-        SelectByTag(AcceptKeyComboBox, Settings.AcceptKey);
-        SelectByTag(MaxSuggestionsComboBox, Settings.MaxSuggestions.ToString(CultureInfo.InvariantCulture));
+        SelectByTag(AcceptKeyComboBox, Settings.StrictAcceptKey);
+        SelectByTag(ExtendedCountComboBox, Settings.ExtendedMaxCount.ToString(CultureInfo.InvariantCulture));
+        SelectByTag(ExtendedKeyModeComboBox, Settings.ExtendedKeyMode);
+        SelectByTag(PlacementComboBox, Settings.OverlayPlacement);
+        SelectByTag(PopupStyleComboBox, Settings.PopupStyle);
+        SelectByTag(EnglishCommitComboBox, Settings.EnglishModeCommit);
 
+        ExtendedKeysTextBox.Text = Settings.ExtendedKeys;
         MinLengthTextBox.Text = Settings.MinQueryLength.ToString(CultureInfo.InvariantCulture);
         DebounceTextBox.Text = Settings.DebounceMs.ToString(CultureInfo.InvariantCulture);
         TimeoutTextBox.Text = Settings.RequestTimeoutMs.ToString(CultureInfo.InvariantCulture);
         BlockedTextBox.Text = string.Join(", ", Settings.BlockedProcesses);
+
+        UpdateKeyModeState();
     }
 
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
         Settings.CloudAssistEnabled = EnabledCheckBox.IsChecked == true;
-        Settings.DoublePinyinMode = DoublePinyinCheckBox.IsChecked == true;
-        Settings.ShowCloudIcon = ShowCloudIconCheckBox.IsChecked == true;
-        Settings.FuzzyPinyin = FuzzyCheckBox.IsChecked == true;
+        Settings.StrictEnabled = StrictCheckBox.IsChecked == true;
+        Settings.StrictDedupeLocal = StrictDedupeCheckBox.IsChecked == true;
+        Settings.StrictAcceptKey = TagOf(AcceptKeyComboBox, "Oem3");
 
-        Settings.AcceptKey = (AcceptKeyComboBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "Tab";
-        Settings.MaxSuggestions = ParseInt((MaxSuggestionsComboBox.SelectedItem as ComboBoxItem)?.Tag as string, 1, 1, 3);
+        Settings.ExtendedEnabled = ExtendedCheckBox.IsChecked == true;
+        Settings.ExtendedMaxCount = ParseInt(TagOf(ExtendedCountComboBox, "3"), 3, 1, 4);
+        Settings.ExtendedKeyMode = TagOf(ExtendedKeyModeComboBox, "Auto");
+        Settings.ExtendedKeys = string.Concat(KeyNames.ParseDigits(ExtendedKeysTextBox.Text).Select(k => (char)k));
+
+        Settings.OverlayPlacement = TagOf(PlacementComboBox, "Below");
+        Settings.PopupStyle = TagOf(PopupStyleComboBox, "Card");
+        Settings.ShowCloudIcon = ShowCloudIconCheckBox.IsChecked == true;
+
+        Settings.EnglishModeAssistEnabled = EnglishCheckBox.IsChecked == true;
+        Settings.EnglishModeCommit = TagOf(EnglishCommitComboBox, "Replace");
+
+        Settings.DoublePinyinMode = DoublePinyinCheckBox.IsChecked == true;
+        Settings.FuzzyPinyin = FuzzyCheckBox.IsChecked == true;
         Settings.MinQueryLength = ParseInt(MinLengthTextBox.Text, Settings.MinQueryLength, 1, 8);
         Settings.DebounceMs = ParseInt(DebounceTextBox.Text, Settings.DebounceMs, 40, 500);
         Settings.RequestTimeoutMs = ParseInt(TimeoutTextBox.Text, Settings.RequestTimeoutMs, 300, 5000);
@@ -97,11 +120,38 @@ public partial class CloudAssistPage : UserControl
 
         var saved = AppServices.SaveSettings();
         _feature.ApplySettings();
+        UpdateKeyModeState();
 
-        SaveStatusText.Text = saved
-            ? "已保存并立即生效"
-            : $"已应用，但写入配置失败：{AppServices.Store.LastError}";
+        if (!saved)
+        {
+            SaveStatusText.Text = $"已应用，但写入配置失败：{AppServices.Store.LastError}";
+            return;
+        }
+
+        var manualKeys = KeyNames.ParseDigits(Settings.ExtendedKeys).Count;
+        SaveStatusText.Text = Settings.ExtendedKeyMode == "Manual" && manualKeys < Settings.ExtendedMaxCount
+            ? $"已保存；手动键位只有 {manualKeys} 个，扩展最多显示 {manualKeys} 条"
+            : "已保存并立即生效";
     }
+
+    private void OnKeyModeChanged(object sender, SelectionChangedEventArgs e) => UpdateKeyModeState();
+
+    private void UpdateKeyModeState()
+    {
+        if (ExtendedKeysTextBox is null)
+        {
+            return;
+        }
+
+        var manual = string.Equals(
+            TagOf(ExtendedKeyModeComboBox, "Auto"),
+            "Manual",
+            StringComparison.OrdinalIgnoreCase);
+        ExtendedKeysTextBox.IsEnabled = manual;
+    }
+
+    private static string TagOf(ComboBox comboBox, string fallback) =>
+        (comboBox.SelectedItem as ComboBoxItem)?.Tag as string ?? fallback;
 
     private static int ParseInt(string? text, int fallback, int min, int max)
     {

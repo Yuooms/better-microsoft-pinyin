@@ -340,3 +340,35 @@ public static class UiaFactory
         return (IUIAutomation)Activator.CreateInstance(type)!;
     }
 }
+
+/// <summary>UIA 的控件模式标识。</summary>
+public static class UiaInterop
+{
+    /// <summary><c>UIA_ValuePatternId</c>：读写控件文本。</summary>
+    public const int ValuePatternId = 10002;
+}
+
+/// <summary>
+/// <c>IUIAutomationValuePattern</c>：只用来读控件文本，不写。
+/// </summary>
+/// <remarks>
+/// vtable 顺序必须与 UIA 头文件一致：SetValue、CurrentValue、CurrentIsReadOnly。
+/// 接口方法不能省略，否则后续方法的槽位会整体前移，调用到错误函数。
+/// </remarks>
+[ComImport]
+[Guid("A94CD8B1-0844-4CD6-9D2D-640537AB39E9")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+public interface IUIAutomationValuePattern
+{
+    /// <summary>设置值（本程序不会调用）。</summary>
+    [PreserveSig]
+    int SetValue([MarshalAs(UnmanagedType.BStr)] string value);
+
+    /// <summary>读取当前值。</summary>
+    [PreserveSig]
+    int get_CurrentValue([MarshalAs(UnmanagedType.BStr)] out string value);
+
+    /// <summary>是否只读。</summary>
+    [PreserveSig]
+    int get_CurrentIsReadOnly(out int value);
+}

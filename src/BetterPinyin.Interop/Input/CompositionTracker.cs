@@ -50,6 +50,9 @@ public sealed class CompositionTracker
     /// <summary>当前重建出的拼音串（小写字母）。</summary>
     public string RawInput => _length == 0 ? string.Empty : new string(_buffer, 0, _length);
 
+    /// <summary>当前已累积的字母数（英文模式下用来决定退格次数）。</summary>
+    public int PendingLength => _length;
+
     /// <summary>当前代次号，每次变化递增。</summary>
     public long Version => _version;
 
@@ -147,10 +150,15 @@ public sealed class CompositionTracker
     }
 
     /// <summary>强制复位，不触发事件。</summary>
+    /// <remarks>
+    /// 必须递增代次：否则上屏之后，之前发出的查询仍会通过 <see cref="Version"/> 校验，
+    /// 把已经过期的浮窗重新弹出来。
+    /// </remarks>
     public void Reset()
     {
         _length = 0;
         IsComposing = false;
+        _version++;
     }
 
     private void Append(char c)

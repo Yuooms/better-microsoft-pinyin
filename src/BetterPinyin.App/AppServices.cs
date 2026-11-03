@@ -1,4 +1,6 @@
 using BetterPinyin.App.Features.CloudAssist;
+using BetterPinyin.Core.Lexicon;
+using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Settings;
 using BetterPinyin.Interop.Uia;
 
@@ -33,15 +35,34 @@ internal static class AppServices
     /// <summary>UIA 是否可用，供诊断页展示。</summary>
     public static bool UiaAvailable { get; set; }
 
+    /// <summary>内置读音词库；加载失败时为空词库，匹配器自动降级为放行。</summary>
+    public static IPinyinLexicon Lexicon { get; private set; } = NullPinyinLexicon.Instance;
+
+    /// <summary>词库加载失败原因，供诊断页展示。</summary>
+    public static string? LexiconError { get; private set; }
+
     /// <summary>装配共享服务。</summary>
     public static void Initialize()
     {
         Settings = Store.Load();
 
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        Lexicon = BinaryLexicon.LoadDefault(SyllableTable.Default, out var lexiconError);
+        LexiconError = lexiconError;
+        watch.Stop();
+
+        Log.Write(Lexicon.IsLoaded
+            ? $"词库已加载：{Lexicon.WordCount} 词，{watch.ElapsedMilliseconds} ms"
+            : $"词库未加载（{lexiconError}），读音校验降级为放行");
+
         Uia = new UiaWorker();
         Reader = new UiaCandidateWindowReader(Uia);
         UiaAvailable = Reader.Initialize();
     }
+
+    /// <summary>按当前设置创建读音匹配器。</summary>
+    /// <returns>匹配器实例。</returns>
+    public static PinyinMatcher CreateMatcher() => new(Lexicon, Settings.FuzzyPinyin);
 
     /// <summary>保存设置到磁盘。</summary>
     /// <returns>保存成功返回 true。</returns>

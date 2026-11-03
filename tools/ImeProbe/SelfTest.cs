@@ -25,9 +25,11 @@ internal static class SelfTest
         UiaCandidateWindowReader reader,
         string sample,
         int holdSeconds = 0,
-        string? shotPath = null)
+        string? shotPath = null,
+        int acceptKey = 0,
+        bool englishMode = false)
     {
-        Console.WriteLine($"[自测] 将打开记事本并模拟输入 \"{sample}\"");
+        Console.WriteLine($"[自测] 将打开记事本并模拟输入 \"{sample}\"（采纳键 0x{acceptKey:X2}）");
         Console.WriteLine("[自测] 注意：期间会抢占前台窗口，约 5 秒后自动恢复");
 
         using var notepad = StartNotepad();
@@ -77,8 +79,39 @@ internal static class SelfTest
             return 6;
         }
 
+        if (englishMode)
+        {
+            // 按一下 Shift 把微软拼音切到英文状态，此时字母会直接进文档。
+            KeySender.SendVirtualKey(0x10, markAsOwn: false);
+            Thread.Sleep(300);
+            Console.WriteLine("[自测] 已尝试切到英文状态");
+        }
+
         TypePinyin(sample);
         Thread.Sleep(400);
+
+        if (englishMode)
+        {
+            Thread.Sleep(900);
+            var typed = editHandle != IntPtr.Zero ? ReadEditorText(editHandle) : string.Empty;
+            Console.WriteLine($"[自测] 英文模式输入后内容 = \"{typed}\"");
+
+            if (acceptKey != 0)
+            {
+                Console.WriteLine($"[自测] 发送采纳键 0x{acceptKey:X2}");
+                KeySender.SendVirtualKey((ushort)acceptKey, markAsOwn: false);
+                Thread.Sleep(900);
+                var after = editHandle != IntPtr.Zero ? ReadEditorText(editHandle) : string.Empty;
+                Console.WriteLine($"[自测] 采纳后内容 = \"{after}\"");
+                Console.WriteLine(after.Length > 0 && after != typed
+                    ? "[自测] ✓ 英文模式替换已生效"
+                    : "[自测] ✗ 英文模式未生效（可能仍在中文状态，或校验未通过）");
+            }
+
+            CancelComposition();
+            SafeKill(notepad);
+            return 0;
+        }
 
         var editedText = editHandle != IntPtr.Zero ? ReadEditorText(editHandle) : string.Empty;
         Console.WriteLine($"[自测] 记事本当前内容 = \"{editedText}\"" +
@@ -140,6 +173,20 @@ internal static class SelfTest
         foreach (var element in reader.ReadAllElements(handle))
         {
             Console.WriteLine($"    {element}");
+        }
+
+        if (acceptKey != 0)
+        {
+            // 等云端查询完成、浮窗与按键映射就绪后再按，否则按键会被输入法当成选词。
+            Thread.Sleep(600);
+            Console.WriteLine($"[自测] 发送采纳键 0x{acceptKey:X2}");
+            KeySender.SendVirtualKey((ushort)acceptKey, markAsOwn: false);
+            Thread.Sleep(800);
+            var committed = editHandle != IntPtr.Zero ? ReadEditorText(editHandle) : string.Empty;
+            Console.WriteLine($"[自测] 采纳后内容 = \"{committed}\"");
+            Console.WriteLine(committed.Length > 0
+                ? "[自测] ✓ 云候选已上屏"
+                : "[自测] ✗ 未检测到上屏内容");
         }
 
         CancelComposition();
