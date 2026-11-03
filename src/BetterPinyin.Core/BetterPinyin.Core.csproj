@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <RootNamespace>BetterPinyin.Core</RootNamespace>
+    <AssemblyName>BetterPinyin.Core</AssemblyName>
+    <Description>业务核心：云联想查询、拼音校验、排序、缓存、设置与功能模块框架。不得引用任何 UI 或 Win32。</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\BetterPinyin.Contracts\BetterPinyin.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>
