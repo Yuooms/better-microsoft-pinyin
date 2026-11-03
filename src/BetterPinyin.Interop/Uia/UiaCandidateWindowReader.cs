@@ -173,7 +173,7 @@ public sealed class UiaCandidateWindowReader
 
         return _worker.Invoke(
             () => ReadAllElementsCore(automation, condition, hwnd),
-            timeoutMilliseconds: 250,
+            timeoutMilliseconds: 1500,
             fallback: (IReadOnlyList<UiaElementInfo>)Array.Empty<UiaElementInfo>());
     }
 
@@ -261,16 +261,20 @@ public sealed class UiaCandidateWindowReader
             var hr = automation.ElementFromHandle(hwnd, out var root);
             if (hr != 0 || root is null)
             {
+                LastDiagnostic = "ElementFromHandle 失败 hr=0x" + hr.ToString("X8");
                 return list;
             }
 
             hr = root.FindAll(TreeScope.Descendants, condition, out var found);
             if (hr != 0 || found is null)
             {
+                LastDiagnostic = "FindAll 失败 hr=0x" + hr.ToString("X8");
                 return list;
             }
 
             found.get_Length(out var length);
+            LastDiagnostic = $"ElementFromHandle=ok FindAll=ok 元素数={length}";
+
             for (var i = 0; i < length; i++)
             {
                 if (found.GetElement(i, out var element) != 0 || element is null)
@@ -292,17 +296,20 @@ public sealed class UiaCandidateWindowReader
                     offscreen != 0));
             }
         }
-        catch (COMException)
+        catch (COMException ex)
         {
-            // 目标进程退出、UIA 连接断开等，返回已读到的部分。
+            LastDiagnostic = "COMException hr=0x" + ex.HResult.ToString("X8") + " " + ex.Message;
         }
-        catch (InvalidCastException)
+        catch (InvalidCastException ex)
         {
-            // 元素在读取过程中失效。
+            LastDiagnostic = $"InvalidCastException {ex.Message}";
         }
 
         return list;
     }
+
+    /// <summary>最近一次 UIA 读取的诊断信息，用于探针输出。</summary>
+    public static string LastDiagnostic { get; private set; } = "(尚未读取)";
 
     private static CandidateWindowSnapshot ReadCore(
         IUIAutomation automation,

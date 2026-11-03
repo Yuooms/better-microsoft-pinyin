@@ -49,7 +49,17 @@ internal static class Program
         if (args.Any(a => a.Equals("--self-test", StringComparison.OrdinalIgnoreCase)))
         {
             var sample = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal)) ?? "yisitalu";
-            var exitCode = SelfTest.Run(_uiaWorker, _reader, sample);
+            var hold = 0;
+            var holdArg = args.FirstOrDefault(a => a.StartsWith("--hold=", StringComparison.OrdinalIgnoreCase));
+            if (holdArg is not null && int.TryParse(holdArg["--hold=".Length..], out var parsed))
+            {
+                hold = parsed;
+            }
+
+            var shotArg = args.FirstOrDefault(a => a.StartsWith("--shot=", StringComparison.OrdinalIgnoreCase));
+            string? shotPath = shotArg is null ? null : shotArg["--shot=".Length..];
+
+            var exitCode = SelfTest.Run(_uiaWorker, _reader, sample, hold, shotPath);
             _uiaWorker.Dispose();
             return exitCode;
         }

@@ -20,7 +20,12 @@ internal static class SelfTest
     /// <param name="reader">候选窗读取器。</param>
     /// <param name="sample">要模拟输入的拼音串。</param>
     /// <returns>进程退出码：0 表示成功读到候选窗。</returns>
-    public static int Run(UiaWorker worker, UiaCandidateWindowReader reader, string sample)
+    public static int Run(
+        UiaWorker worker,
+        UiaCandidateWindowReader reader,
+        string sample,
+        int holdSeconds = 0,
+        string? shotPath = null)
     {
         Console.WriteLine($"[自测] 将打开记事本并模拟输入 \"{sample}\"");
         Console.WriteLine("[自测] 注意：期间会抢占前台窗口，约 5 秒后自动恢复");
@@ -45,20 +50,67 @@ internal static class SelfTest
         Console.WriteLine(focused
             ? "[自测] 已把记事本切到前台"
             : "[自测] 未能把记事本切到前台，输入可能落到了别的窗口");
-        Thread.Sleep(400);
+        Thread.Sleep(300);
+
+        // 记事本的编辑区是子控件，必须把焦点交给它，否则按键没有落点。
+        var editHandle = NativeMethods.FindWindowEx(editorHandle, IntPtr.Zero, "Edit", null);
+        Console.WriteLine(editHandle != IntPtr.Zero
+            ? $"[自测] 找到编辑区 0x{editHandle.ToInt64():X}"
+            : "[自测] 未找到 Edit 子控件（记事本可能是新版控件结构）");
+
+        if (editHandle != IntPtr.Zero)
+        {
+            NativeMethods.SetFocus(editHandle);
+            Thread.Sleep(150);
+        }
 
         var foreground = NativeMethods.GetForegroundWindow();
         Console.WriteLine($"[自测] 前台窗口 = 0x{foreground.ToInt64():X}（目标 0x{editorHandle.ToInt64():X}），" +
                           $"进程 = {WindowProcess.GetProcessName(foreground)}");
 
+        if (foreground != editorHandle)
+        {
+            // 抢焦失败时绝不能继续发送按键，否则会把字母打进用户正在使用的窗口。
+            Console.WriteLine("[自测] ✗ 前台不是记事本，已中止，未发送任何按键");
+            DumpImeWindowCandidates(reader);
+            SafeKill(notepad);
+            return 6;
+        }
+
         TypePinyin(sample);
         Thread.Sleep(400);
 
-        var editedText = ReadEditorText(editorHandle);
+        var editedText = editHandle != IntPtr.Zero ? ReadEditorText(editHandle) : string.Empty;
         Console.WriteLine($"[自测] 记事本当前内容 = \"{editedText}\"" +
                           (string.IsNullOrEmpty(editedText)
                               ? "（为空说明按键没有进入输入法，可能前台或焦点被抢）"
                               : "（非空说明按键确实被输入法接收了）"));
+
+        if (holdSeconds > 0)
+        {
+            Console.WriteLine($"[自测] 保持画面 {holdSeconds} 秒，便于外部截图取证");
+            Thread.Sleep(holdSeconds * 1000);
+        }
+
+        if (!string.IsNullOrWhiteSpace(shotPath))
+        {
+            // 只截记事本窗口周围一块，全屏图太大不便查看。
+            NativeMethods.GetWindowRect(editorHandle, out var windowRect);
+            const int margin = 140;
+            var regionX = Math.Max(0, windowRect.Left - margin);
+            var regionY = Math.Max(0, windowRect.Top - margin);
+            var regionWidth = windowRect.Width + (margin * 2);
+            var regionHeight = windowRect.Height + (margin * 2);
+
+            if (ScreenGrabber.Capture(shotPath, regionX, regionY, regionWidth, regionHeight, 2, out var shotWidth, out var shotHeight))
+            {
+                Console.WriteLine($"[自测] 截图已保存：{shotPath}（{shotWidth}x{shotHeight}，原区域 {regionWidth}x{regionHeight}）");
+            }
+            else
+            {
+                Console.WriteLine("[自测] 截图失败");
+            }
+        }
 
         var handle = WaitForCandidateWindow(reader, TimeSpan.FromSeconds(2));
         if (handle == IntPtr.Zero)
@@ -95,12 +147,22 @@ internal static class SelfTest
 
     private static void TypePinyin(string sample)
     {
+        var index = 0;
         foreach (var ch in sample)
         {
             var virtualKey = char.ToUpperInvariant(ch);
-            KeySender.SendVirtualKey(virtualKey);
+            var ok = KeySender.SendVirtualKey(virtualKey);
+            if (!ok && index == 0)
+            {
+                Console.WriteLine($"[自测] ✗ SendInput 失败，Win32 错误码 = {System.Runtime.InteropServices.Marshal.GetLastWin32Error()}");
+                return;
+            }
+
+            index++;
             Thread.Sleep(12);
         }
+
+        Console.WriteLine($"[自测] 已发送 {index} 个字母");
     }
 
     private static IntPtr WaitForCandidateWindow(UiaCandidateWindowReader reader, TimeSpan timeout)
@@ -145,6 +207,7 @@ internal static class SelfTest
 
             var elements = reader.ReadAllElements(handle);
             Console.WriteLine($"[自测] 0x{handle.ToInt64():X} ({process}/{className}) 的 UIA 元素数 = {elements.Count}");
+            Console.WriteLine($"[自测] 诊断：{UiaCandidateWindowReader.LastDiagnostic}");
             foreach (var element in elements.Take(60))
             {
                 Console.WriteLine($"    {element}");
@@ -152,16 +215,15 @@ internal static class SelfTest
         }
     }
 
-    private static string ReadEditorText(IntPtr hostWindow)
+    private static string ReadEditorText(IntPtr editHandle)
     {
-        var edit = NativeMethods.FindWindowEx(hostWindow, IntPtr.Zero, "Edit", null);
-        if (edit == IntPtr.Zero)
+        if (editHandle == IntPtr.Zero)
         {
             return string.Empty;
         }
 
         var buffer = new System.Text.StringBuilder(2048);
-        NativeMethods.SendMessage(edit, NativeMethods.WM_GETTEXT, new IntPtr(buffer.Capacity), buffer);
+        NativeMethods.SendMessage(editHandle, NativeMethods.WM_GETTEXT, new IntPtr(buffer.Capacity), buffer);
         return buffer.ToString();
     }
 
