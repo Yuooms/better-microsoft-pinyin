@@ -46,6 +46,36 @@ internal static class Program
             ? "[UIA] 初始化成功"
             : "[UIA] 初始化失败，后续将无法读取候选窗");
 
+        if (args.Any(a => a.Equals("--activate-app", StringComparison.OrdinalIgnoreCase)))
+        {
+            var process = System.Diagnostics.Process
+                .GetProcessesByName("BetterMicrosoftPinyin")
+                .FirstOrDefault();
+            if (process is null || process.MainWindowHandle == IntPtr.Zero)
+            {
+                Console.WriteLine("[置前] 未找到运行中的设置窗口");
+                return 1;
+            }
+
+            var ok = NativeMethods.ForceForegroundWindow(process.MainWindowHandle);
+
+            var moveArg = args.FirstOrDefault(a => a.StartsWith("--move-app=", StringComparison.OrdinalIgnoreCase));
+            if (moveArg is not null && TryParseRect(moveArg["--move-app=".Length..], out var mx, out var my, out var mw, out var mh))
+            {
+                NativeMethods.SetWindowPos(
+                    process.MainWindowHandle,
+                    IntPtr.Zero,
+                    mx,
+                    my,
+                    mw,
+                    mh,
+                    NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
+            }
+
+            Console.WriteLine(ok ? "[置前] 已切到前台" : "[置前] 系统拒绝置前");
+            return ok ? 0 : 2;
+        }
+
         if (args.Any(a => a.Equals("--self-test", StringComparison.OrdinalIgnoreCase)) ||
             args.Any(a => a.Equals("--hit-test", StringComparison.OrdinalIgnoreCase)))
         {

@@ -15,7 +15,8 @@
         </Grid.ColumnDefinitions>
 
         <!-- 左侧导航：内容由 FeatureRegistry 提供的设置页自动生成 -->
-        <Border Background="{StaticResource SurfaceAltBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,1,0">
+        <!-- 半透明：亚克力生效时透出模糊，失败时叠在白底上几乎看不出差别 -->
+        <Border Background="#66F6F7F9" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,1,0">
             <DockPanel>
                 <StackPanel DockPanel.Dock="Top" Margin="20,22,20,14">
                     <TextBlock Text="Better 微软拼音" FontSize="15" FontWeight="SemiBold" />

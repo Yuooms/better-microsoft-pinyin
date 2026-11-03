@@ -53,7 +53,7 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
     /// <inheritdoc />
     public Task StartAsync(CancellationToken cancellationToken)
     {
-        _window = new CloudCandidateWindow();
+        _window = new CloudCandidateWindow(_settings.PopupStyle);
 
         _controller.SuggestionsReady += OnSuggestionsReady;
         _controller.SuggestionsCleared += OnSuggestionsCleared;
@@ -80,8 +80,22 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
         return Task.CompletedTask;
     }
 
-    /// <summary>设置变更后让控制器重建排序参数。</summary>
-    public void ApplySettings() => _controller.ApplySettings();
+    /// <summary>设置变更后让控制器重建排序参数，并在样式变化时重建浮窗。</summary>
+    public void ApplySettings()
+    {
+        _controller.ApplySettings();
+
+        // 分层窗口与普通窗口不能运行时互转，样式变了只能换一个窗口。
+        if (_window is null ||
+            string.Equals(_window.PopupStyle, _settings.PopupStyle, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _window.HideSuggestion();
+        _window.Close();
+        _window = new CloudCandidateWindow(_settings.PopupStyle);
+    }
 
     /// <inheritdoc />
     public void Dispose()

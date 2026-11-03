@@ -113,6 +113,14 @@ public static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool GetGUIThreadInfo(uint idThread, ref GuiThreadInfo pgui);
 
+    /// <summary>读取窗口标题。</summary>
+    /// <param name="hWnd">窗口句柄。</param>
+    /// <param name="text">接收缓冲。</param>
+    /// <param name="maxCount">缓冲长度。</param>
+    /// <returns>实际字符数。</returns>
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, EntryPoint = "GetWindowTextW")]
+    public static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder text, int maxCount);
+
     /// <summary>获取窗口类名。</summary>
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern int GetClassName(IntPtr hWnd, char[] lpClassName, int nMaxCount);
@@ -394,6 +402,83 @@ public static class NativeMethods
 
     /// <summary>主显示器高度（物理像素）。</summary>
     public static int ScreenHeight => GetSystemMetrics(1);
+
+
+    /// <summary><c>WCA_ACCENT_POLICY</c>：窗口合成属性里的强调色策略。</summary>
+    public const int WCA_ACCENT_POLICY = 19;
+
+    /// <summary><c>ACCENT_ENABLE_ACRYLICBLURBEHIND</c>：亚克力模糊。</summary>
+    public const int ACCENT_ENABLE_ACRYLICBLURBEHIND = 4;
+
+    /// <summary>
+    /// 设置窗口合成属性（未公开 API，Win10 1803+ 可用）。
+    /// </summary>
+    [DllImport("user32.dll")]
+    public static extern int SetWindowCompositionAttribute(IntPtr hwnd, ref WindowCompositionAttributeData data);
+
+    /// <summary>设置 DWM 窗口属性。</summary>
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+    /// <summary>把 DWM 边框扩展到整个客户区，配合透明背景显示模糊。</summary>
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref Margins margins);
+
+    /// <summary>创建圆角矩形区域。</summary>
+    [DllImport("gdi32.dll")]
+    public static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int width, int height);
+
+    /// <summary>设置窗口区域（系统接管区域句柄）。</summary>
+    [DllImport("user32.dll")]
+    public static extern int SetWindowRgn(IntPtr hwnd, IntPtr hRgn, bool redraw);
+
+    /// <summary>DWM 边框边距。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Margins
+    {
+        /// <summary>左边距。</summary>
+        public int Left;
+
+        /// <summary>右边距。</summary>
+        public int Right;
+
+        /// <summary>上边距。</summary>
+        public int Top;
+
+        /// <summary>下边距。</summary>
+        public int Bottom;
+    }
+
+    /// <summary>窗口合成属性数据。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WindowCompositionAttributeData
+    {
+        /// <summary>属性编号。</summary>
+        public int Attribute;
+
+        /// <summary>数据指针。</summary>
+        public IntPtr Data;
+
+        /// <summary>数据大小。</summary>
+        public int SizeOfData;
+    }
+
+    /// <summary>强调色策略。</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct AccentPolicy
+    {
+        /// <summary>状态，见 <see cref="ACCENT_ENABLE_ACRYLICBLURBEHIND"/>。</summary>
+        public int AccentState;
+
+        /// <summary>标志位。</summary>
+        public int AccentFlags;
+
+        /// <summary>着色，格式为 AABBGGRR。</summary>
+        public int GradientColor;
+
+        /// <summary>动画编号。</summary>
+        public int AnimationId;
+    }
 
     /// <summary>取某点所在显示器的工作区（物理像素）。</summary>
     /// <param name="point">屏幕坐标。</param>
