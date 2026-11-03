@@ -1,13 +1,15 @@
 using System.Net.Http;
 using System.Text;
 using BetterPinyin.Core.Cloud;
+using BetterPinyin.Core.Lexicon;
 using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Ranking;
 
 namespace BetterPinyin.Tests;
 
 /// <summary>
-/// 测试入口。默认只跑离线单元测试，加 <c>--live</c> 额外跑一次真实联网验证。
+/// 测试入口。默认只跑离线单元测试，加 <c>--live</c> 额外跑一次真实联网验证，
+/// 加 <c>--probe &lt;拼音&gt;</c> 可直接观察匹配与分区结果。
 /// </summary>
 internal static class Program
 {
@@ -18,46 +20,121 @@ internal static class Program
         Console.WriteLine("  Better Microsoft Pinyin · 核心逻辑测试");
         Console.WriteLine("════════════════════════════════════════════════════════");
 
-        CoreTests.RunAll();
+        var lexicon = BinaryLexicon.LoadDefault(SyllableTable.Default, out var lexiconError);
+        Console.WriteLine(lexicon.IsLoaded
+            ? $"词库：{lexicon.WordCount} 词，{(lexicon is BinaryLexicon binary ? binary.ByteLength / 1024 : 0)} KB"
+            : $"词库：未加载（{lexiconError}）");
+        Console.WriteLine();
+
+        if (args.Any(a => a.Equals("--probe", StringComparison.OrdinalIgnoreCase)))
+        {
+            Probe(args, lexicon);
+            return 0;
+        }
+
+        try
+        {
+            CoreTests.RunAll();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"✗ 测试中断：{ex.GetType().Name} {ex.Message}");
+            Check.True(false, $"测试不应抛异常：{ex.Message}");
+        }
 
         if (args.Any(a => a.Equals("--live", StringComparison.OrdinalIgnoreCase)))
         {
             Console.WriteLine();
             Console.WriteLine("[附加] 真实联网验证");
-            await LiveCheckAsync().ConfigureAwait(false);
+            await LiveCheckAsync(lexicon).ConfigureAwait(false);
         }
 
         return Check.Report();
     }
 
+    /// <summary>对一组候选分别打印匹配结果与分区结果，用于手工核对边界。</summary>
+    private static void Probe(string[] args, IPinyinLexicon lexicon)
+    {
+        var query = args.FirstOrDefault(a =>
+            !a.StartsWith("--", StringComparison.Ordinal) && !a.Contains('=', StringComparison.Ordinal))
+            ?? "yisitalu";
+        var matcher = new PinyinMatcher(lexicon);
+
+        Console.WriteLine($"输入：{query}");
+        Console.WriteLine($"音节切分：{(SyllableTable.Default.TrySegment(query, true, out var count) ? $"{count} 个音节" : "无法切分（可能是简拼）")}");
+        Console.WriteLine($"简拼展开：{string.Join(" / ", lexicon.ExpandAbbreviation(query, 4))}");
+        Console.WriteLine();
+
+        foreach (var candidate in args.Where(a => a.StartsWith("candidate=", StringComparison.OrdinalIgnoreCase)))
+        {
+            var text = candidate["candidate=".Length..];
+            var match = matcher.Match(query, text);
+            Console.WriteLine($"  {text,-12} {match.Kind,-18} 音节={match.LemmaSyllables} 多余={match.ExtraSyllables}");
+            Console.WriteLine($"  {"",-12} 读音：{Describe(text, lexicon)}");
+        }
+    }
+
+    private static string Describe(string text, IPinyinLexicon lexicon)
+    {
+        var parts = new List<string>(text.Length);
+        foreach (var ch in text)
+        {
+            if (!lexicon.TryGetReadings(ch, out var slots))
+            {
+                parts.Add($"{ch}=?");
+                continue;
+            }
+
+            var names = new List<string>(slots.Length);
+            foreach (var raw in slots)
+            {
+                if (raw != 0 && raw - 1 < SyllableTable.Default.Count)
+                {
+                    names.Add(SyllableTable.Default.GetCanonical(raw - 1));
+                }
+            }
+
+            parts.Add($"{ch}={string.Join("/", names)}");
+        }
+
+        return string.Join("  ", parts);
+    }
+
     /// <summary>
     /// 用真实 Bing 接口跑一遍完整管线，确认端到端可用。
     /// </summary>
-    private static async Task LiveCheckAsync()
+    private static async Task LiveCheckAsync(IPinyinLexicon lexicon)
     {
         using var httpClient = new HttpClient();
         var client = new BingSuggestionClient(httpClient, timeoutMilliseconds: 2000);
-        var matcher = new PinyinMatcher(fuzzyEnabled: true);
-        var ranker = new CandidateRanker(matcher, maxResults: 3);
+        var matcher = new PinyinMatcher(lexicon);
+        var options = new SuggestionSelectionOptions(
+            StrictEnabled: true,
+            StrictDedupeLocal: true,
+            ExtendedEnabled: true,
+            ExtendedMaxCount: 3);
 
-        foreach (var query in new[] { "yisitalu", "yisital", "ystl", "weiruan" })
+        foreach (var query in new[] { "yisitalu", "ystl", "ruonawa", "lianxiang", "weiruan" })
         {
             try
             {
                 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(6));
-                var raw = await client.GetSuggestionsAsync(query, timeout.Token).ConfigureAwait(false);
-                var cleaned = ResultSanitizer.Sanitize(raw, query);
-                var ranked = ranker.Rank(query, cleaned);
 
-                var rawText = raw.Count == 0 ? "(无)" : string.Join(" / ", raw.Take(4));
-                var finalText = ranked.Count == 0 ? "(无)" : string.Join(" / ", ranked.Select(r => $"{r.Text}({r.Score:0.00})"));
+                var expansions = lexicon.ExpandAbbreviation(query, 3);
+                var isAbbreviation = expansions.Count > 0 &&
+                    !SyllableTable.Default.TrySegment(query, true, out _);
+                var request = isAbbreviation ? expansions[0] : query;
 
-                Console.WriteLine($"    {query,-10} 原始 {raw.Count,2} 条  来源={client.LastEndpointId ?? "-"}");
-                Console.WriteLine($"    {"",-10}   清洗后 {cleaned.Count} 条：{string.Join(" / ", cleaned.Take(4))}");
-                Console.WriteLine($"    {"",-10}   最终：{finalText}");
-                if (raw.Count > 0 && cleaned.Count == 0)
+                var raw = await client.GetSuggestionsAsync(request, timeout.Token).ConfigureAwait(false);
+                var cleaned = ResultSanitizer.Sanitize(raw, request, SanitizeOptions.Extended);
+                var set = SuggestionSelector.Select(query, cleaned, null, matcher, options);
+
+                Console.WriteLine($"    {query,-10} 查询={request}  原始 {raw.Count,2} 条  来源={client.LastEndpointId ?? "-"}");
+                Console.WriteLine($"    {"",-10}   严格：{set.Strict?.Text ?? "(无)"}");
+                Console.WriteLine($"    {"",-10}   扩展：{(set.Extended.Count == 0 ? "(无)" : string.Join(" / ", set.Extended.Select(e => e.Text)))}");
+                if (isAbbreviation)
                 {
-                    Console.WriteLine($"    {"",-10}   原始样本被全部过滤：{rawText}");
+                    Console.WriteLine($"    {"",-10}   简拼展开：{string.Join(" / ", expansions)}");
                 }
             }
             catch (Exception ex)

@@ -27,7 +27,8 @@ publish/
 *.snupkg
 
 # ── 本项目运行期数据，绝不入库 ────────────────────────────────────────────
-# 内置词库为构建期生成物，由 tools/LexiconBuilder 产出
+# 词库构建的原始数据约 7.7 MB，构建时下载，不入库
+tools/LexiconBuilder/sources/
 data/lexicon.bin
 data/*.tmp
 

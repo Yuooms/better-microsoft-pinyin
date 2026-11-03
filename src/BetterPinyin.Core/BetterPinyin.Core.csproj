@@ -11,4 +11,9 @@
     <ProjectReference Include="..\BetterPinyin.Contracts\BetterPinyin.Contracts.csproj" />
   </ItemGroup>
 
+  <!-- 内置词库随程序输出。文件由 tools/LexiconBuilder 生成，见 docs/LEXICON.md。 -->
+  <ItemGroup Condition="Exists('..\..\assets\lexicon.bin')">
+    <Content Include="..\..\assets\lexicon.bin" Link="lexicon.bin" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -76,14 +76,14 @@ public sealed class CandidateRanker
                 continue;
             }
 
-            var matchKind = _matcher.Match(query, text);
-            if (matchKind == PinyinMatchKind.None)
+            var match = _matcher.Match(query, text);
+            if (match.Kind == PinyinMatchKind.None)
             {
                 continue;
             }
 
             var rankScore = 1.0 / (1.0 + (index * 0.6));
-            var matchScore = matchKind == PinyinMatchKind.Abbreviation ? 0.9 : 1.0;
+            var matchScore = match.Kind == PinyinMatchKind.Abbreviation ? 0.9 : 1.0;
             var lengthScore = text.Length >= 3 ? 1.0 : 0.6;
 
             var score = (0.55 * rankScore) + (0.25 * matchScore) + (0.20 * lengthScore);
