@@ -80,6 +80,17 @@ internal static class Program
             if (keysArg is not null)
             {
                 Thread.Sleep(300);
+
+                // 安全闸：前置窗口不是设置窗口就绝不发按键，否则会把 Tab/F4 打到用户正在用的程序里。
+                var foreground = NativeMethods.GetForegroundWindow();
+                if (foreground != process.MainWindowHandle)
+                {
+                    Console.WriteLine(
+                        $"[按键] 前台是 0x{foreground.ToInt64():X}（{WindowProcess.GetProcessName(foreground)}），" +
+                        "不是设置窗口，已取消发送");
+                    return 4;
+                }
+
                 var sent = 0;
                 foreach (var token in keysArg["--send-keys=".Length..]
                              .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))

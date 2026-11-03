@@ -190,6 +190,20 @@ public static class NativeMethods
         int cy,
         uint uFlags);
 
+    /// <summary>强制重绘窗口的指定区域。</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool RedrawWindow(IntPtr hWnd, IntPtr updateRect, IntPtr updateRegion, uint flags);
+
+    /// <summary>重绘非客户区（标题栏）。</summary>
+    public const uint RDW_INVALIDATE = 0x0001;
+
+    /// <summary>立即重绘，不等下一次消息循环。</summary>
+    public const uint RDW_UPDATENOW = 0x0100;
+
+    /// <summary>包含非客户区。</summary>
+    public const uint RDW_FRAME = 0x0400;
+
     /// <summary>获取窗口所在显示器的 DPI。</summary>
     [DllImport("user32.dll")]
     public static extern uint GetDpiForWindow(IntPtr hWnd);

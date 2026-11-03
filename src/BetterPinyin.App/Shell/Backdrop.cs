@@ -122,6 +122,14 @@ internal static class Backdrop
             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER |
             NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_FRAMECHANGED);
 
+        // Win10 在运行中切换深色时，光靠 SWP_FRAMECHANGED 有时不会重画标题栏，
+        // 再显式要求一次非客户区立即重绘。
+        NativeMethods.RedrawWindow(
+            handle,
+            IntPtr.Zero,
+            IntPtr.Zero,
+            NativeMethods.RDW_INVALIDATE | NativeMethods.RDW_UPDATENOW | NativeMethods.RDW_FRAME);
+
         return true;
     }
 
