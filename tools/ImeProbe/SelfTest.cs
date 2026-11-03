@@ -112,10 +112,13 @@ internal static class SelfTest
             }
         }
 
-        var handle = WaitForCandidateWindow(reader, TimeSpan.FromSeconds(2));
+        var anchor = CaretLocator.GetAnchor();
+        Console.WriteLine($"[自测] 锚点 = ({anchor.X},{anchor.Y})，来源 = {anchor.Source}");
+
+        var handle = WaitForCandidateWindow(reader, anchor, TimeSpan.FromSeconds(2));
         if (handle == IntPtr.Zero)
         {
-            Console.WriteLine("[自测] ✗ 未发现候选窗。可能原因：输入法处于英文模式、或该窗口不受 UIA 暴露。");
+            Console.WriteLine("[自测] ✗ 未发现候选窗。可能原因：输入法处于英文模式、或锚点附近没有候选条。");
             DumpImeWindowCandidates(reader);
             DumpHostElementTree(reader);
             CancelComposition();
@@ -125,6 +128,7 @@ internal static class SelfTest
 
         Console.WriteLine($"[自测] ✓ 发现候选窗 0x{handle.ToInt64():X}");
         var snapshot = reader.Read(handle);
+        Console.WriteLine($"[自测] 读取质量 = {snapshot.Quality}");
         Console.WriteLine($"[自测] 候选窗矩形 = ({snapshot.Left},{snapshot.Top}) {snapshot.Width}x{snapshot.Height}");
         Console.WriteLine($"[自测] 候选词 {snapshot.Items.Count} 个：");
         foreach (var item in snapshot.Items)
@@ -145,7 +149,7 @@ internal static class SelfTest
         return snapshot.Items.Count > 0 ? 0 : 5;
     }
 
-    private static void TypePinyin(string sample)
+    internal static void TypePinyin(string sample)
     {
         var index = 0;
         foreach (var ch in sample)
@@ -165,12 +169,15 @@ internal static class SelfTest
         Console.WriteLine($"[自测] 已发送 {index} 个字母");
     }
 
-    private static IntPtr WaitForCandidateWindow(UiaCandidateWindowReader reader, TimeSpan timeout)
+    private static IntPtr WaitForCandidateWindow(
+        UiaCandidateWindowReader reader,
+        AnchorPoint anchor,
+        TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
         {
-            var handle = reader.FindCandidateWindow();
+            var handle = reader.LocateNear(anchor);
             if (handle != IntPtr.Zero)
             {
                 return handle;
@@ -233,7 +240,7 @@ internal static class SelfTest
         Thread.Sleep(80);
     }
 
-    private static Process? StartNotepad()
+    internal static Process? StartNotepad()
     {
         try
         {
@@ -250,7 +257,7 @@ internal static class SelfTest
         }
     }
 
-    private static IntPtr WaitForMainWindow(Process process, TimeSpan timeout)
+    internal static IntPtr WaitForMainWindow(Process process, TimeSpan timeout)
     {
         var deadline = DateTime.UtcNow + timeout;
         while (DateTime.UtcNow < deadline)
@@ -267,7 +274,7 @@ internal static class SelfTest
         return IntPtr.Zero;
     }
 
-    private static void SafeKill(Process process)
+    internal static void SafeKill(Process process)
     {
         try
         {

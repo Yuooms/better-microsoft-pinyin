@@ -286,6 +286,60 @@ public static class NativeMethods
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool BringWindowToTop(IntPtr hWnd);
 
+    /// <summary>把客户区坐标转换为屏幕坐标。</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ClientToScreen(IntPtr hWnd, ref NativePoint lpPoint);
+
+    /// <summary>获取鼠标位置。</summary>
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetCursorPos(out NativePoint lpPoint);
+
+    /// <summary>获取系统度量值。</summary>
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int nIndex);
+
+    /// <summary>主显示器宽度（物理像素）。</summary>
+    public static int ScreenWidth => GetSystemMetrics(0);
+
+    /// <summary>主显示器高度（物理像素）。</summary>
+    public static int ScreenHeight => GetSystemMetrics(1);
+
+    /// <summary>DWM 属性：窗口是否被隐身（cloaked）。</summary>
+    public const int DWMWA_CLOAKED = 14;
+
+    /// <summary>查询窗口的 DWM 属性（整型）。</summary>
+    [DllImport("dwmapi.dll")]
+    public static extern int DwmGetWindowAttribute(IntPtr hwnd, int dwAttribute, out int pvAttribute, int cbAttribute);
+
+    /// <summary>
+    /// 判断窗口是否被 DWM 隐身。
+    /// </summary>
+    /// <param name="hwnd">窗口句柄。</param>
+    /// <returns>被隐身返回 true；查询失败时返回 false。</returns>
+    /// <remarks>
+    /// 沉浸式输入法的宿主窗口在非激活状态下常被 cloak，
+    /// 对 cloak 窗口做 UIA 读取会得到空子树，因此发现候选窗时必须排除它们。
+    /// </remarks>
+    public static bool IsCloaked(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        try
+        {
+            var hr = DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, out var cloaked, sizeof(int));
+            return hr == 0 && cloaked != 0;
+        }
+        catch (DllNotFoundException)
+        {
+            return false;
+        }
+    }
+
     /// <summary>
     /// 强制把目标窗口置为前台。
     /// </summary>

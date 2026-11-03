@@ -19,6 +19,21 @@ public readonly record struct CompositionSnapshot(string RawInput, long Version,
 public readonly record struct CandidateItem(string Text, int Left, int Top, int Width, int Height);
 
 /// <summary>
+/// 候选窗读取的质量等级。上层据此决定去重策略，而不是依赖具体实现。
+/// </summary>
+public enum CandidateReadQuality
+{
+    /// <summary>没有读到任何信息。</summary>
+    None = 0,
+
+    /// <summary>只拿到候选窗矩形，没读到候选词文本。</summary>
+    GeometryOnly = 1,
+
+    /// <summary>候选词文本与矩形都拿到了，可做精确去重。</summary>
+    Exact = 2,
+}
+
+/// <summary>
 /// 输入法候选窗的一次读取结果。读取失败时使用 <see cref="Empty"/>。
 /// </summary>
 /// <param name="IsVisible">候选窗当前是否可见。</param>
@@ -37,8 +52,17 @@ public sealed record CandidateWindowSnapshot(
 {
     /// <summary>候选窗不可见，且没有任何候选。</summary>
     public static CandidateWindowSnapshot Empty { get; } =
-        new(false, 0, 0, 0, 0, Array.Empty<CandidateItem>());
+        new(false, 0, 0, 0, 0, Array.Empty<CandidateItem>())
+        {
+            Quality = CandidateReadQuality.None,
+        };
+
+    /// <summary>本次读取的质量等级。</summary>
+    public CandidateReadQuality Quality { get; init; } = CandidateReadQuality.None;
 
     /// <summary>按屏幕竖直方向排序后的首个候选，读不到时返回 null。</summary>
     public CandidateItem? FirstCandidate => Items.Count > 0 ? Items[0] : null;
+
+    /// <summary>候选窗底边坐标，浮窗据此贴靠。</summary>
+    public int Bottom => Top + Height;
 }

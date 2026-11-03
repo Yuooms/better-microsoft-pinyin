@@ -46,8 +46,10 @@ internal static class Program
             ? "[UIA] 初始化成功"
             : "[UIA] 初始化失败，后续将无法读取候选窗");
 
-        if (args.Any(a => a.Equals("--self-test", StringComparison.OrdinalIgnoreCase)))
+        if (args.Any(a => a.Equals("--self-test", StringComparison.OrdinalIgnoreCase)) ||
+            args.Any(a => a.Equals("--hit-test", StringComparison.OrdinalIgnoreCase)))
         {
+            var isHitTest = args.Any(a => a.Equals("--hit-test", StringComparison.OrdinalIgnoreCase));
             var sample = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal)) ?? "yisitalu";
             var hold = 0;
             var holdArg = args.FirstOrDefault(a => a.StartsWith("--hold=", StringComparison.OrdinalIgnoreCase));
@@ -59,7 +61,10 @@ internal static class Program
             var shotArg = args.FirstOrDefault(a => a.StartsWith("--shot=", StringComparison.OrdinalIgnoreCase));
             string? shotPath = shotArg is null ? null : shotArg["--shot=".Length..];
 
-            var exitCode = SelfTest.Run(_uiaWorker, _reader, sample, hold, shotPath);
+            var exitCode = isHitTest
+                ? HitTest.Run(_reader, sample, shotPath)
+                : SelfTest.Run(_uiaWorker, _reader, sample, hold, shotPath);
+
             _uiaWorker.Dispose();
             return exitCode;
         }
@@ -159,7 +164,8 @@ internal static class Program
 
         try
         {
-            var handle = _reader.FindCandidateWindow();
+            var anchor = CaretLocator.GetAnchor();
+            var handle = _reader.LocateNear(anchor);
             if (handle == IntPtr.Zero)
             {
                 if (_lastCandidateHandle != IntPtr.Zero)
@@ -176,6 +182,7 @@ internal static class Program
             {
                 _lastCandidateHandle = handle;
                 Console.WriteLine($"[候选窗] 发现句柄 0x{handle.ToInt64():X} " +
+                                  $"锚点=({anchor.X},{anchor.Y})/{anchor.Source} " +
                                   $"进程={WindowProcess.GetProcessName(handle)} " +
                                   $"类名={NativeMethods.GetWindowClassName(handle)}");
             }

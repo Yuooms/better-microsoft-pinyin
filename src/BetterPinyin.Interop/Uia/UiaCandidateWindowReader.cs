@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using BetterPinyin.Contracts;
+using BetterPinyin.Interop.Ime;
 using BetterPinyin.Interop.Windowing;
 
 namespace BetterPinyin.Interop.Uia;
@@ -28,28 +29,52 @@ public readonly record struct UiaElementInfo(
 }
 
 /// <summary>
-/// 从微软拼音的候选窗口中读取候选列表。
+/// 读取微软拼音的候选窗内容与位置。
 /// </summary>
 /// <remarks>
-/// 候选窗位于 Windows 的沉浸式 IME 图层（z-band），普通窗口枚举看不到，
-/// 因此这里提供两条发现路径：
+/// <para>发现候选窗的正确姿势（实测结论）：</para>
 /// <list type="number">
-/// <item>按进程名扫描顶层窗口（<c>TextInputHost</c> / <c>ChsIME</c>）。</item>
-/// <item>在系统插入符附近用 <c>WindowFromPoint</c> 命中。</item>
+/// <item>候选条位于沉浸式输入法的独立 window band，<c>EnumWindows</c> 一类枚举 API <b>拿不到它</b>。</item>
+/// <item>按进程名能枚举到的那个 <c>TextInputHost</c> 窗口是输入宿主的全屏站点窗口
+/// （1920x1080 且被 DWM 隐身），它的 UIA 子树为空——误把它当候选窗，就会得出"UIA 读不到"的错误结论。</item>
+/// <item>真正的候选窗只能按坐标命中：在插入符附近调用 <c>WindowFromPoint</c>，
+/// 得到的是一个"小矩形、类名 CoreWindow、未被隐身"的窗口。</item>
 /// </list>
-/// 两条都失败时返回空快照，调用方降级到光标定位而不应报错。
+/// <para>结构（实测）：容器是 <c>Pane</c>（type=50033），AutomationId 为
+/// <c>IME_Prediction_Window</c> 或 <c>IME_Candidate_Window</c>；候选项是 <c>ListItem</c>（type=50007），
+/// 其 <c>Name</c> 即候选词文本；每个候选项下还有
+/// <c>TEMPLATE_PART_CandidateItemIndex</c>（序号）与 <c>TEMPLATE_PART_CandidateItemText</c>（文本）两个 Text 子元素。</para>
 /// </remarks>
 public sealed class UiaCandidateWindowReader
 {
     /// <summary>UIA_ListItemControlTypeId。</summary>
     public const int ListItemControlTypeId = 50007;
 
+    /// <summary>转换候选列表的约定 AutomationId。</summary>
+    public const string CandidateWindowAutomationId = "IME_Candidate_Window";
+
+    /// <summary>预测候选列表的约定 AutomationId。</summary>
+    public const string PredictionWindowAutomationId = "IME_Prediction_Window";
+
+    private const string CoreWindowClassName = "Windows.UI.Core.CoreWindow";
+
     private static readonly string[] ImeProcessNames =
     {
         "TextInputHost",
         "ChsIME",
         "InputPersonalization",
-        "ctfmon",
+    };
+
+    /// <summary>
+    /// 插入符附近的探测偏移。候选条一般在光标下方，也可能因空间不足翻到上方，
+    /// 因此纵向正负都探；横向向右展开以覆盖较长的候选条。
+    /// </summary>
+    private static readonly (int Dx, int Dy)[] ProbeOffsets =
+    {
+        (0, 2), (0, 8), (0, 18), (0, 28), (0, 40),
+        (24, 8), (60, 18), (120, 18), (180, 18),
+        (-24, 18),
+        (0, -22), (0, -34),
     };
 
     private readonly UiaWorker _worker;
@@ -65,6 +90,9 @@ public sealed class UiaCandidateWindowReader
     {
         _worker = worker;
     }
+
+    /// <summary>最近一次 UIA 读取的诊断信息。</summary>
+    public static string LastDiagnostic { get; private set; } = "(尚未读取)";
 
     /// <summary>UIA 是否已成功初始化。</summary>
     public bool IsAvailable { get; private set; }
@@ -90,8 +118,9 @@ public sealed class UiaCandidateWindowReader
                     IsAvailable = true;
                     return true;
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
+                    LastDiagnostic = $"初始化失败：{ex.GetType().Name} {ex.Message}";
                     IsAvailable = false;
                     return false;
                 }
@@ -101,65 +130,81 @@ public sealed class UiaCandidateWindowReader
     }
 
     /// <summary>
-    /// 扫描所有可能的输入法窗口。
+    /// 在锚点附近查找候选窗并读取内容，带重试（候选条可能比按键晚几十毫秒出现）。
     /// </summary>
-    /// <returns>窗口句柄、进程名与类名的列表，用于诊断。</returns>
-    public IReadOnlyList<(IntPtr Handle, string ProcessName, string ClassName)> DiscoverImeWindows()
+    /// <param name="anchor">锚点（屏幕坐标）。</param>
+    /// <param name="timeoutMilliseconds">总等待上限。</param>
+    /// <returns>候选窗快照；找不到时返回 <see cref="CandidateWindowSnapshot.Empty"/>。</returns>
+    public CandidateWindowSnapshot ReadBest(AnchorPoint anchor, int timeoutMilliseconds = 400)
     {
-        var result = new List<(IntPtr, string, string)>();
+        var deadline = Environment.TickCount64 + timeoutMilliseconds;
 
-        NativeMethods.EnumWindows(
-            (hwnd, _) =>
+        do
+        {
+            var handle = LocateNear(anchor);
+            if (handle != IntPtr.Zero)
             {
-                if (!NativeMethods.IsWindowVisible(hwnd))
+                var snapshot = Read(handle);
+                if (snapshot.IsVisible)
                 {
-                    return true;
+                    return snapshot;
                 }
+            }
 
-                NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
-                var processName = GetProcessName(pid);
-                if (processName is null)
-                {
-                    return true;
-                }
+            Thread.Sleep(60);
+        }
+        while (Environment.TickCount64 < deadline);
 
-                var matched = false;
-                foreach (var candidate in ImeProcessNames)
-                {
-                    if (string.Equals(processName, candidate, StringComparison.OrdinalIgnoreCase))
-                    {
-                        matched = true;
-                        break;
-                    }
-                }
-
-                if (matched)
-                {
-                    result.Add((hwnd, processName, NativeMethods.GetWindowClassName(hwnd)));
-                }
-
-                return true;
-            },
-            IntPtr.Zero);
-
-        return result;
+        return CandidateWindowSnapshot.Empty;
     }
 
-    /// <summary>
-    /// 在指定屏幕坐标处用 <c>WindowFromPoint</c> 探测窗口。
-    /// </summary>
-    /// <param name="x">屏幕 X 坐标。</param>
-    /// <param name="y">屏幕 Y 坐标。</param>
-    /// <returns>命中的窗口句柄，未命中返回 <see cref="IntPtr.Zero"/>。</returns>
-    public static IntPtr WindowAt(int x, int y)
+    /// <summary>在锚点附近按坐标命中候选窗。</summary>
+    /// <param name="anchor">锚点（屏幕坐标）。</param>
+    /// <returns>候选窗句柄；未命中返回 <see cref="IntPtr.Zero"/>。</returns>
+    public IntPtr LocateNear(AnchorPoint anchor)
     {
-        return NativeMethods.WindowFromPoint(new NativePoint { X = x, Y = y });
+        foreach (var (dx, dy) in ProbeOffsets)
+        {
+            var handle = WindowAt(anchor.X + dx, anchor.Y + dy);
+            if (handle == IntPtr.Zero || !IsPlausibleCandidateWindow(handle))
+            {
+                continue;
+            }
+
+            // 类名与尺寸可伪造性低，但仍以"能读出候选"作为最终判据。
+            var snapshot = Read(handle);
+            if (snapshot.IsVisible)
+            {
+                return handle;
+            }
+        }
+
+        return IntPtr.Zero;
+    }
+
+    /// <summary>读取指定窗口的候选窗快照。</summary>
+    /// <param name="hwnd">候选窗句柄。</param>
+    /// <returns>候选窗快照；读不到时返回 <see cref="CandidateWindowSnapshot.Empty"/>。</returns>
+    public CandidateWindowSnapshot Read(IntPtr hwnd)
+    {
+        if (_automation is null || _trueCondition is null || hwnd == IntPtr.Zero)
+        {
+            return CandidateWindowSnapshot.Empty;
+        }
+
+        var automation = _automation;
+        var condition = _trueCondition;
+
+        return _worker.Invoke(
+            () => ReadCore(automation, condition, hwnd),
+            timeoutMilliseconds: 400,
+            fallback: CandidateWindowSnapshot.Empty);
     }
 
     /// <summary>
     /// 读取指定窗口下的全部 UIA 元素（诊断用，数量可能较多）。
     /// </summary>
-    /// <param name="hwnd">候选窗句柄。</param>
+    /// <param name="hwnd">窗口句柄。</param>
     /// <returns>元素信息列表，失败时返回空列表。</returns>
     public IReadOnlyList<UiaElementInfo> ReadAllElements(IntPtr hwnd)
     {
@@ -178,75 +223,121 @@ public sealed class UiaCandidateWindowReader
     }
 
     /// <summary>
-    /// 读取候选窗快照。
+    /// 按进程名枚举输入法相关窗口。
     /// </summary>
-    /// <param name="hwnd">候选窗句柄；传 <see cref="IntPtr.Zero"/> 时自动发现。</param>
-    /// <returns>候选窗快照，读不到时返回 <see cref="CandidateWindowSnapshot.Empty"/>。</returns>
-    public CandidateWindowSnapshot Read(IntPtr hwnd = default)
+    /// <remarks>
+    /// 仅供诊断与对比使用：这里能枚举到的通常是输入宿主的全屏站点窗口，而不是候选条本身。
+    /// 候选条必须用 <see cref="LocateNear"/> 按坐标命中。
+    /// </remarks>
+    /// <returns>窗口句柄、进程名与类名的列表。</returns>
+    public IReadOnlyList<(IntPtr Handle, string ProcessName, string ClassName)> DiscoverImeWindows()
     {
-        if (_automation is null || _trueCondition is null)
-        {
-            return CandidateWindowSnapshot.Empty;
-        }
+        var result = new List<(IntPtr, string, string)>();
 
-        var target = hwnd == IntPtr.Zero ? FindCandidateWindow() : hwnd;
-        if (target == IntPtr.Zero)
-        {
-            return CandidateWindowSnapshot.Empty;
-        }
+        NativeMethods.EnumWindows(
+            (hwnd, _) =>
+            {
+                if (!NativeMethods.IsWindowVisible(hwnd))
+                {
+                    return true;
+                }
 
-        var automation = _automation;
-        var condition = _trueCondition;
+                NativeMethods.GetWindowThreadProcessId(hwnd, out var pid);
+                var processName = GetProcessName(pid);
+                if (processName is null || !IsImeProcess(processName))
+                {
+                    return true;
+                }
 
-        return _worker.Invoke(
-            () => ReadCore(automation, condition, target),
-            timeoutMilliseconds: 250,
-            fallback: CandidateWindowSnapshot.Empty);
+                result.Add((hwnd, processName, NativeMethods.GetWindowClassName(hwnd)));
+                return true;
+            },
+            IntPtr.Zero);
+
+        return result;
     }
 
-    /// <summary>自动发现候选窗句柄。</summary>
-    /// <returns>候选窗句柄，找不到返回 <see cref="IntPtr.Zero"/>。</returns>
-    public IntPtr FindCandidateWindow()
+    /// <summary>在指定屏幕坐标处用 <c>WindowFromPoint</c> 探测窗口。</summary>
+    /// <param name="x">屏幕 X 坐标。</param>
+    /// <param name="y">屏幕 Y 坐标。</param>
+    /// <returns>命中的窗口句柄，未命中返回 <see cref="IntPtr.Zero"/>。</returns>
+    public static IntPtr WindowAt(int x, int y)
     {
-        foreach (var (handle, _, _) in DiscoverImeWindows())
-        {
-            var elements = ReadAllElements(handle);
-            foreach (var element in elements)
-            {
-                if (string.Equals(element.AutomationId, "IME_Candidate_Window", StringComparison.Ordinal))
-                {
-                    return handle;
-                }
+        return NativeMethods.WindowFromPoint(new NativePoint { X = x, Y = y });
+    }
 
-                if (element.ControlType == ListItemControlTypeId && !element.IsOffscreen && !string.IsNullOrWhiteSpace(element.Name))
-                {
-                    return handle;
-                }
+    /// <summary>
+    /// 判断一个窗口是否"可能是候选条"：类名是 CoreWindow、属于输入法进程、未被隐身、且不是全屏。
+    /// </summary>
+    /// <param name="hwnd">窗口句柄。</param>
+    /// <returns>可能是候选条返回 true。</returns>
+    public static bool IsPlausibleCandidateWindow(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero)
+        {
+            return false;
+        }
+
+        if (NativeMethods.IsCloaked(hwnd))
+        {
+            return false;
+        }
+
+        if (!string.Equals(
+                NativeMethods.GetWindowClassName(hwnd),
+                CoreWindowClassName,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        if (!IsImeProcess(WindowProcess.GetProcessName(hwnd)))
+        {
+            return false;
+        }
+
+        if (!NativeMethods.GetWindowRect(hwnd, out var rect))
+        {
+            return false;
+        }
+
+        if (rect.Width <= 0 || rect.Height <= 0)
+        {
+            return false;
+        }
+
+        // 输入宿主的站点窗口是全屏的，必须排除，否则会读到空子树。
+        return rect.Width < NativeMethods.ScreenWidth * 0.8
+               && rect.Height < NativeMethods.ScreenHeight * 0.5;
+    }
+
+    private static bool IsImeProcess(string? processName)
+    {
+        if (string.IsNullOrEmpty(processName))
+        {
+            return false;
+        }
+
+        foreach (var name in ImeProcessNames)
+        {
+            if (string.Equals(processName, name, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
             }
         }
 
-        return IntPtr.Zero;
+        return false;
     }
 
-    /// <summary>把物理像素矩形换算成逻辑像素，便于 UI 层使用。</summary>
-    /// <param name="rect">物理像素矩形。</param>
-    /// <param name="dpi">该窗口所在显示器的 DPI。</param>
-    /// <returns>逻辑像素矩形。</returns>
-    public static NativeRect ToLogical(NativeRect rect, uint dpi)
+    private static bool IsCandidateContainer(UiaElementInfo element)
     {
-        if (dpi == 0 || dpi == 96)
-        {
-            return rect;
-        }
+        return string.Equals(element.AutomationId, CandidateWindowAutomationId, StringComparison.Ordinal)
+               || string.Equals(element.AutomationId, PredictionWindowAutomationId, StringComparison.Ordinal);
+    }
 
-        var scale = 96.0 / dpi;
-        return new NativeRect
-        {
-            Left = (int)Math.Round(rect.Left * scale),
-            Top = (int)Math.Round(rect.Top * scale),
-            Right = (int)Math.Round(rect.Right * scale),
-            Bottom = (int)Math.Round(rect.Bottom * scale),
-        };
+    private static bool Intersects(NativeRect a, NativeRect b)
+    {
+        return a.Left < b.Right && b.Left < a.Right && a.Top < b.Bottom && b.Top < a.Bottom;
     }
 
     private static IReadOnlyList<UiaElementInfo> ReadAllElementsCore(
@@ -254,7 +345,7 @@ public sealed class UiaCandidateWindowReader
         IUIAutomationCondition condition,
         IntPtr hwnd)
     {
-        var list = new List<UiaElementInfo>(64);
+        var list = new List<UiaElementInfo>(48);
 
         try
         {
@@ -273,7 +364,7 @@ public sealed class UiaCandidateWindowReader
             }
 
             found.get_Length(out var length);
-            LastDiagnostic = $"ElementFromHandle=ok FindAll=ok 元素数={length}";
+            LastDiagnostic = $"元素数={length}";
 
             for (var i = 0; i < length; i++)
             {
@@ -302,14 +393,11 @@ public sealed class UiaCandidateWindowReader
         }
         catch (InvalidCastException ex)
         {
-            LastDiagnostic = $"InvalidCastException {ex.Message}";
+            LastDiagnostic = "InvalidCastException " + ex.Message;
         }
 
         return list;
     }
-
-    /// <summary>最近一次 UIA 读取的诊断信息，用于探针输出。</summary>
-    public static string LastDiagnostic { get; private set; } = "(尚未读取)";
 
     private static CandidateWindowSnapshot ReadCore(
         IUIAutomation automation,
@@ -317,16 +405,41 @@ public sealed class UiaCandidateWindowReader
         IntPtr hwnd)
     {
         var elements = ReadAllElementsCore(automation, condition, hwnd);
+        if (elements.Count == 0)
+        {
+            return CandidateWindowSnapshot.Empty;
+        }
+
+        UiaElementInfo? container = null;
+        foreach (var element in elements)
+        {
+            if (IsCandidateContainer(element) && element.Bounds.Width > 0 && element.Bounds.Height > 0)
+            {
+                container = element;
+                break;
+            }
+        }
 
         var items = new List<CandidateItem>(16);
         foreach (var element in elements)
         {
-            if (element.IsOffscreen || element.ControlType != ListItemControlTypeId)
+            if (element.ControlType != ListItemControlTypeId || element.IsOffscreen)
             {
                 continue;
             }
 
-            if (string.IsNullOrWhiteSpace(element.Name) || element.Bounds.Width <= 0 || element.Bounds.Height <= 0)
+            if (string.IsNullOrWhiteSpace(element.Name))
+            {
+                continue;
+            }
+
+            if (element.Bounds.Width <= 0 || element.Bounds.Height <= 0)
+            {
+                continue;
+            }
+
+            // 有容器时只收容器内的项，避免把同窗口里的其它列表算进来。
+            if (container is not null && !Intersects(element.Bounds, container.Value.Bounds))
             {
                 continue;
             }
@@ -341,20 +454,31 @@ public sealed class UiaCandidateWindowReader
 
         if (items.Count == 0)
         {
-            return CandidateWindowSnapshot.Empty;
+            // 有容器但没读到候选项：仍然给出矩形供浮窗贴靠，但如实标注质量等级。
+            return container is null
+                ? CandidateWindowSnapshot.Empty
+                : new CandidateWindowSnapshot(
+                    true,
+                    container.Value.Bounds.Left,
+                    container.Value.Bounds.Top,
+                    container.Value.Bounds.Width,
+                    container.Value.Bounds.Height,
+                    Array.Empty<CandidateItem>())
+                {
+                    Quality = CandidateReadQuality.GeometryOnly,
+                };
         }
 
-        // 按屏幕位置排序：先上后左，兼容横向与纵向两种候选窗布局。
         items.Sort((a, b) =>
         {
             var byTop = a.Top.CompareTo(b.Top);
             return byTop != 0 ? byTop : a.Left.CompareTo(b.Left);
         });
 
-        var left = items.Min(i => i.Left);
-        var top = items.Min(i => i.Top);
-        var right = items.Max(i => i.Left + i.Width);
-        var bottom = items.Max(i => i.Top + i.Height);
+        var left = container?.Bounds.Left ?? items.Min(i => i.Left);
+        var top = container?.Bounds.Top ?? items.Min(i => i.Top);
+        var right = container?.Bounds.Right ?? items.Max(i => i.Left + i.Width);
+        var bottom = container?.Bounds.Bottom ?? items.Max(i => i.Top + i.Height);
 
         return new CandidateWindowSnapshot(
             IsVisible: true,
@@ -362,7 +486,10 @@ public sealed class UiaCandidateWindowReader
             Top: top,
             Width: right - left,
             Height: bottom - top,
-            Items: items);
+            Items: items)
+        {
+            Quality = CandidateReadQuality.Exact,
+        };
     }
 
     private string? GetProcessName(uint pid)
@@ -371,7 +498,7 @@ public sealed class UiaCandidateWindowReader
         {
             if (_processNameCache.TryGetValue(pid, out var cached))
             {
-                return cached;
+                return string.IsNullOrEmpty(cached) ? null : cached;
             }
         }
 
