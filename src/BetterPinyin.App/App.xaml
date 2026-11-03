@@ -38,35 +38,11 @@
                 <Setter Property="TextWrapping" Value="Wrap" />
             </Style>
 
-            <Style TargetType="CheckBox">
-                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
-                <Setter Property="FontFamily" Value="Microsoft YaHei UI, Segoe UI" />
-                <Setter Property="FontSize" Value="13" />
-                <Setter Property="Margin" Value="0,0,0,6" />
-            </Style>
-
-            <Style TargetType="TextBox">
-                <Setter Property="FontFamily" Value="Microsoft YaHei UI, Segoe UI" />
-                <Setter Property="FontSize" Value="13" />
-                <Setter Property="Padding" Value="8,5" />
-                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-            </Style>
-
-            <Style TargetType="ComboBox">
-                <Setter Property="FontFamily" Value="Microsoft YaHei UI, Segoe UI" />
-                <Setter Property="FontSize" Value="13" />
-                <Setter Property="Padding" Value="8,4" />
-            </Style>
-
-            <Style TargetType="Button">
-                <Setter Property="FontFamily" Value="Microsoft YaHei UI, Segoe UI" />
-                <Setter Property="FontSize" Value="13" />
-                <Setter Property="Padding" Value="14,6" />
-                <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
-                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
-                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
-                <Setter Property="Cursor" Value="Hand" />
-            </Style>
+            <!--
+                控件本身不设样式：CheckBox / TextBox / ComboBox / Button 全部使用 WPF 的
+                系统默认模板（Aero2），与资源管理器、系统设置里的控件观感一致。
+                这里只保留文字排版与少量语义色，避免出现"网页化"的自绘控件。
+            -->
 
         </ResourceDictionary>
     </Application.Resources>

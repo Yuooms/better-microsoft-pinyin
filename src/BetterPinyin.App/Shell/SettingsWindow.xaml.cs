@@ -37,7 +37,7 @@ public partial class SettingsWindow : Window
 
         SourceInitialized += (_, _) =>
         {
-            var enabled = Backdrop.TryApplyAcrylic(this, 0x9AFFFFFF);
+            var enabled = Backdrop.TryApplyAcrylic(this, 0x73FFFFFF);
             Log.Write(enabled ? "设置窗口已启用亚克力背景" : "亚克力不可用，设置窗口使用实色背景");
         };
 

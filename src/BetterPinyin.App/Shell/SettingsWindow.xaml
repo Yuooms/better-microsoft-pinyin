@@ -8,17 +8,17 @@
         Background="{StaticResource SurfaceBrush}"
         FontFamily="Microsoft YaHei UI, Segoe UI">
 
+    <!-- 使用系统标题栏：控件与外观都交给 Windows，不自绘 -->
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="228" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <!-- 左侧导航：内容由 FeatureRegistry 提供的设置页自动生成 -->
-        <!-- 半透明：亚克力生效时透出模糊，失败时叠在白底上几乎看不出差别 -->
-        <Border Background="#66F6F7F9" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,1,0">
+        <!-- 左侧导航：半透明，透出系统亚克力；内容区接近不透明以保证可读 -->
+        <Border Background="#1FFFFFFF" BorderBrush="#22000000" BorderThickness="0,0,1,0">
             <DockPanel>
-                <StackPanel DockPanel.Dock="Top" Margin="20,22,20,14">
+                <StackPanel DockPanel.Dock="Top" Margin="20,18,20,12">
                     <TextBlock Text="Better 微软拼音" FontSize="15" FontWeight="SemiBold" />
                     <TextBlock x:Name="VersionText" Style="{StaticResource Hint}" Margin="0,2,0,0" />
                 </StackPanel>
@@ -43,18 +43,18 @@
                     </ListBox.ItemTemplate>
                     <ListBox.ItemContainerStyle>
                         <Style TargetType="ListBoxItem">
-                            <Setter Property="Padding" Value="12,9" />
-                            <Setter Property="Margin" Value="10,1" />
+                            <Setter Property="Padding" Value="10,7" />
+                            <Setter Property="Margin" Value="8,1" />
                             <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
                             <Setter Property="Template">
                                 <Setter.Value>
                                     <ControlTemplate TargetType="ListBoxItem">
-                                        <Border x:Name="Root" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                                        <Border x:Name="Root" Background="Transparent" CornerRadius="3" Padding="{TemplateBinding Padding}">
                                             <ContentPresenter />
                                         </Border>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
-                                                <Setter TargetName="Root" Property="Background" Value="#ECEEF2" />
+                                                <Setter TargetName="Root" Property="Background" Value="#22000000" />
                                             </Trigger>
                                             <Trigger Property="IsSelected" Value="True">
                                                 <Setter TargetName="Root" Property="Background" Value="{StaticResource AccentSoftBrush}" />
@@ -69,9 +69,11 @@
             </DockPanel>
         </Border>
 
-        <!-- 右侧内容区 -->
-        <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Auto" Padding="28,24,20,24">
-            <ContentControl x:Name="ContentHost" />
-        </ScrollViewer>
+        <!-- 右侧内容区：接近不透明，长文本在浅色壁纸上也能看清 -->
+        <Border Grid.Column="1" Background="#F7FFFFFF">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="24,20,16,20">
+                <ContentControl x:Name="ContentHost" />
+            </ScrollViewer>
+        </Border>
     </Grid>
 </Window>
