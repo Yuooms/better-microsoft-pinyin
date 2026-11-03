@@ -1,6 +1,5 @@
 using System.Reflection;
 using System.Windows;
-using System.Windows.Interop;
 using System.Windows.Controls;
 using BetterPinyin.App.Features.CloudAssist;
 using BetterPinyin.Core.Features;
@@ -11,8 +10,9 @@ namespace BetterPinyin.App.Shell;
 /// 设置窗口。
 /// </summary>
 /// <remarks>
-/// 左侧导航完全由 <see cref="IFeatureModule.SettingsPages"/> 推导：
+/// 左侧导航由 <see cref="IFeatureModule.SettingsPages"/> 推导：
 /// 新增一个功能模块，导航里就自动多一页，不需要改本文件。
+/// 「外观」「网络与环境」「关于」属于外壳，在构造里直接追加。
 /// </remarks>
 public partial class SettingsWindow : Window
 {
@@ -32,14 +32,11 @@ public partial class SettingsWindow : Window
             _items.Add(new NavItem(page.Title, page.Glyph, page.Description, page.CreateView));
         }
 
+        _items.Add(new NavItem("外观", "\uE790", "主题与窗口背景", () => new AppearancePage()));
         _items.Add(new NavItem("网络与环境", "\uE774", "端点体检与环境自检", () => new NetworkPage()));
         _items.Add(new NavItem("关于", "\uE946", "项目说明", () => new AboutPage()));
 
-        SourceInitialized += (_, _) =>
-        {
-            var enabled = Backdrop.TryApplyAcrylic(this, 0x73FFFFFF);
-            Log.Write(enabled ? "设置窗口已启用亚克力背景" : "亚克力不可用，设置窗口使用实色背景");
-        };
+        ShellChrome.Attach(this, WindowRoot);
 
         NavList.ItemsSource = _items;
         if (_items.Count > 0)
@@ -87,7 +84,5 @@ public partial class SettingsWindow : Window
         public string? Description { get; }
 
         public Func<object> CreateView { get; }
-
-        public override string ToString() => Title;
     }
 }

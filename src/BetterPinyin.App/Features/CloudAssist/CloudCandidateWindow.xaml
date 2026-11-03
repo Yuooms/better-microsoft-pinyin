@@ -22,8 +22,8 @@
         3. 不遮候选条：候选条在沉浸式 IME 图层，永远在我们上方，只能贴边显示。
     -->
     <Border x:Name="Card"
-            Background="#FFFFFF"
-            BorderBrush="#D8DDE5"
+            Background="{DynamicResource PopupBackgroundBrush}"
+            BorderBrush="{DynamicResource PopupStrokeBrush}"
             BorderThickness="1"
             CornerRadius="8"
             Padding="12,6"
@@ -46,7 +46,7 @@
                         <TextBlock Text="&#xE753;"
                                    FontFamily="Segoe MDL2 Assets"
                                    FontSize="12"
-                                   Foreground="#0F6CBD"
+                                   Foreground="{DynamicResource AccentBrush}"
                                    Opacity="{Binding IconOpacity}"
                                    VerticalAlignment="Center"
                                    Margin="0,0,7,0" />
@@ -56,12 +56,12 @@
                                    FontFamily="Microsoft YaHei UI"
                                    FontSize="{Binding TextSize}"
                                    FontWeight="{Binding TextWeight}"
-                                   Foreground="#1F2328"
+                                   Foreground="{DynamicResource TextPrimaryBrush}"
                                    TextTrimming="CharacterEllipsis"
                                    VerticalAlignment="Center" />
 
                         <Border Grid.Column="2"
-                                Background="#F1F3F6"
+                                Background="{DynamicResource PopupKeyChipBrush}"
                                 CornerRadius="4"
                                 Padding="5,1"
                                 Margin="10,0,0,0"
@@ -69,7 +69,7 @@
                             <TextBlock Text="{Binding KeyLabel}"
                                        FontFamily="Segoe UI"
                                        FontSize="11"
-                                       Foreground="#6B7280" />
+                                       Foreground="{DynamicResource TextSecondaryBrush}" />
                         </Border>
                     </Grid>
                 </DataTemplate>

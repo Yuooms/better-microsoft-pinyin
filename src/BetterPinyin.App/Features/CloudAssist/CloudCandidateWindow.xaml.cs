@@ -69,14 +69,13 @@ public partial class CloudCandidateWindow : Window
         if (_acrylic)
         {
             Background = Brushes.Transparent;
-            Card.Background = Brushes.Transparent;
-            Card.BorderBrush = new SolidColorBrush(Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF));
-            Card.BorderThickness = new Thickness(1);
             Card.Margin = new Thickness(0);
             Card.Effect = null;
         }
 
         SourceInitialized += OnSourceInitialized;
+        ThemeManager.ThemeChanged += OnThemeChanged;
+        Closed += (_, _) => ThemeManager.ThemeChanged -= OnThemeChanged;
     }
 
     /// <summary>当前样式标识。</summary>
@@ -142,21 +141,55 @@ public partial class CloudCandidateWindow : Window
             return;
         }
 
-        if (!Backdrop.TryApplyAcrylic(this, 0xCCFFFFFF))
+        var result = Backdrop.Apply(this, BackdropMode.Acrylic, ThemeManager.IsDark, isFlyout: true);
+        if (!result.Applied)
         {
             // 降级为实心卡片，避免透明窗口直接透出桌面。
-            Background = Brushes.White;
-            Card.Background = Brushes.White;
-            Card.BorderBrush = new SolidColorBrush(Color.FromRgb(0xD8, 0xDD, 0xE5));
+            Background = null;
+            Card.Background = ThemeManager.ResolveBrush("PopupBackgroundBrush");
+            Card.BorderBrush = ThemeManager.ResolveBrush("PopupStrokeBrush");
+            Card.BorderThickness = new Thickness(1);
             Log.Write("[浮窗] 亚克力不可用，已降级为纯白卡片");
             return;
         }
+
+        ApplyGlassCard();
 
         // 非分层窗口没有 WS_EX_LAYERED 的天然穿透，用命中测试返回 HTTRANSPARENT。
         if (PresentationSource.FromVisual(this) is HwndSource source)
         {
             source.AddHook(NoHitTest);
         }
+    }
+
+    private void OnThemeChanged(object? sender, EventArgs e)
+    {
+        if (!_acrylic)
+        {
+            // 卡片模式由 DynamicResource 自动跟随，不需要额外处理。
+            return;
+        }
+
+        var result = Backdrop.Apply(this, BackdropMode.Acrylic, ThemeManager.IsDark, isFlyout: true);
+        if (result.Applied)
+        {
+            ApplyGlassCard();
+            return;
+        }
+
+        // 切主题后材质失败：退回卡片，避免透出桌面。
+        Background = null;
+        Card.Background = ThemeManager.ResolveBrush("PopupBackgroundBrush");
+        Card.BorderBrush = ThemeManager.ResolveBrush("PopupStrokeBrush");
+        Card.BorderThickness = new Thickness(1);
+    }
+
+    /// <summary>亚克力模式下卡片本身不画底色，只留一条描边把内容圈住。</summary>
+    private void ApplyGlassCard()
+    {
+        Card.Background = Brushes.Transparent;
+        Card.BorderBrush = ThemeManager.ResolveBrush("PopupStrokeBrush");
+        Card.BorderThickness = new Thickness(1);
     }
 
     private static IntPtr NoHitTest(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)

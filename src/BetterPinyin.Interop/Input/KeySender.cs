@@ -30,6 +30,26 @@ public static class KeySender
                == (uint)inputs.Length;
     }
 
+    /// <summary>
+    /// 只发送按下或只发送抬起。
+    /// </summary>
+    /// <param name="virtualKey">虚拟键码。</param>
+    /// <param name="down">true 发送按下，false 发送抬起。</param>
+    /// <param name="markAsOwn">是否打上本程序的注入标记。</param>
+    /// <returns>是否发送成功。</returns>
+    /// <remarks>
+    /// 组合键（如 Alt+Down 打开下拉框）需要按住修饰键再按目标键，
+    /// <see cref="SendVirtualKey"/> 会立刻抬起，做不到这一点。
+    /// </remarks>
+    public static bool SendKeyState(ushort virtualKey, bool down, bool markAsOwn = true)
+    {
+        var input = down
+            ? CreateKeyDown(virtualKey, unicode: false, markAsOwn)
+            : CreateKeyUp(virtualKey, unicode: false, markAsOwn);
+
+        return NativeMethods.SendInput(1, new[] { input }, System.Runtime.InteropServices.Marshal.SizeOf<INPUT>()) == 1;
+    }
+
     /// <summary>逐字符发送 Unicode 文本。</summary>
     /// <param name="text">要上屏的文本。</param>
     /// <param name="markAsOwn">是否打上本程序的注入标记。</param>

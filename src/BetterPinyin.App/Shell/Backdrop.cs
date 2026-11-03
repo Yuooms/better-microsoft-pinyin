@@ -6,34 +6,94 @@ using BetterPinyin.Interop.Windowing;
 
 namespace BetterPinyin.App.Shell;
 
+/// <summary>窗口背景类型。</summary>
+internal enum BackdropKind
+{
+    /// <summary>实色。</summary>
+    Solid,
+
+    /// <summary>Mica（Win11 的系统材质）。</summary>
+    Mica,
+
+    /// <summary>亚克力。</summary>
+    Acrylic,
+}
+
+/// <summary>背景应用结果。</summary>
+/// <param name="Kind">最终使用的类型。</param>
+/// <param name="Applied">是否真的启用了材质；false 表示没有改动任何合成状态，或已完整回滚。</param>
+/// <param name="Detail">诊断说明。</param>
+internal readonly record struct BackdropResult(BackdropKind Kind, bool Applied, string Detail);
+
 /// <summary>
-/// 窗口亚克力背景。
+/// 窗口背景材质。
 /// </summary>
 /// <remarks>
 /// <para>
-/// Windows 11（22621+）走 DWM 的 <c>DWMWA_SYSTEMBACKDROP_TYPE</c>；Windows 10 走未公开的
-/// <c>SetWindowCompositionAttribute</c>。两条路都要求窗口自身不画不透明背景，
-/// 否则模糊会被 WPF 的绘制盖住，所以成功后把 <see cref="Window.Background"/> 置为透明。
+/// Windows 11（22621+）走公开的 <c>DWMWA_SYSTEMBACKDROP_TYPE</c>：设置窗口用 Mica、
+/// 云浮窗用 Acrylic，这正是系统「设置」自己的选择。Windows 10 只有未公开的
+/// <c>SetWindowCompositionAttribute</c>，而且它会让 DWM 在拖动时逐帧重算整窗模糊，
+/// 窗口会明显拖不动——所以自动模式下 Win10 一律走实色，只有用户显式选择才启用。
 /// </para>
 /// <para>
-/// 失败时恢复实色背景并返回 false。宁可看起来普通，也不要出现一块黑底或透出桌面。
+/// 失败时必须把 <c>CompositionTarget.BackgroundColor</c> 与边框扩展一起还原。
+/// 只还原 <see cref="Window.Background"/> 会留下"透明但没模糊"的窗口，直接透出桌面。
 /// </para>
 /// </remarks>
 internal static class Backdrop
 {
-    /// <summary>系统背景类型：亚克力（<c>DWMSBT_TRANSIENTWINDOW</c>）。</summary>
     private const int DwmSystemBackdropType = 38;
-
-    /// <summary>窗口圆角偏好（Win11）。</summary>
     private const int DwmWindowCornerPreference = 33;
+    private const int DwmUseImmersiveDarkMode = 20;
+    private const int DwmUseImmersiveDarkModeLegacy = 19;
+
+    private const int BackdropNone = 1;
+    private const int BackdropMica = 2;
+    private const int BackdropAcrylic = 3;
+
+    private static bool _failureLogged;
+
+    /// <summary>系统是否支持 <c>DWMWA_SYSTEMBACKDROP_TYPE</c>。</summary>
+    public static bool SupportsSystemBackdrop => Environment.OSVersion.Version.Build >= 22621;
 
     /// <summary>
-    /// 尝试给窗口加亚克力背景。
+    /// 应用窗口背景。
     /// </summary>
-    /// <param name="window">目标窗口，必须已经创建句柄。</param>
-    /// <param name="tint">着色，格式 AABBGGRR；值越白越接近磨砂白。</param>
-    /// <returns>成功返回 true。</returns>
-    public static bool TryApplyAcrylic(Window window, uint tint)
+    /// <param name="window">目标窗口，必须已创建句柄。</param>
+    /// <param name="mode">背景策略。</param>
+    /// <param name="dark">是否深色主题。</param>
+    /// <param name="isFlyout">是否为浮层（用 Acrylic 而不是 Mica）。</param>
+    /// <returns>结果；<see cref="BackdropResult.Applied"/> 为 false 时调用方应使用实色。</returns>
+    public static BackdropResult Apply(Window window, BackdropMode mode, bool dark, bool isFlyout = false)
+    {
+        var handle = new WindowInteropHelper(window).Handle;
+        if (handle == IntPtr.Zero)
+        {
+            return new BackdropResult(BackdropKind.Solid, false, "窗口句柄无效");
+        }
+
+        // 标题栏与材质无关，任何模式下都要设，否则深色内容配浅色标题栏很割裂。
+        ApplyDarkTitleBar(window, dark);
+
+        if (!AppearanceOptions.ShouldUseGlass(mode))
+        {
+            return new BackdropResult(BackdropKind.Solid, false, "未启用材质");
+        }
+
+        var build = Environment.OSVersion.Version.Build;
+        if (build >= 22621)
+        {
+            return ApplySystemBackdrop(handle, dark, isFlyout);
+        }
+
+        return ApplyAccent(handle);
+    }
+
+    /// <summary>设置深色标题栏。</summary>
+    /// <param name="window">目标窗口。</param>
+    /// <param name="dark">是否深色。</param>
+    /// <returns>系统是否接受。</returns>
+    public static bool ApplyDarkTitleBar(Window window, bool dark)
     {
         var handle = new WindowInteropHelper(window).Handle;
         if (handle == IntPtr.Zero)
@@ -41,39 +101,42 @@ internal static class Backdrop
             return false;
         }
 
-        var source = HwndSource.FromHwnd(handle);
-        if (source?.CompositionTarget is null)
+        var attribute = Environment.OSVersion.Version.Build >= 18985
+            ? DwmUseImmersiveDarkMode
+            : DwmUseImmersiveDarkModeLegacy;
+
+        var value = dark ? 1 : 0;
+        if (NativeMethods.DwmSetWindowAttribute(handle, attribute, ref value, sizeof(int)) != 0)
         {
             return false;
         }
 
-        // 客户区不画底色，DWM 的模糊才能透出来。
-        source.CompositionTarget.BackgroundColor = Colors.Transparent;
+        // 部分 19041/19042 需要一次 SWP_FRAMECHANGED 才会重绘非客户区。
+        NativeMethods.SetWindowPos(
+            handle,
+            IntPtr.Zero,
+            0,
+            0,
+            0,
+            0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOZORDER |
+            NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_FRAMECHANGED);
 
-        var margins = new NativeMethods.Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
-        NativeMethods.DwmExtendFrameIntoClientArea(handle, ref margins);
+        return true;
+    }
 
-        var build = Environment.OSVersion.Version.Build;
-        if (build >= 22621)
+    /// <summary>给窗口加系统圆角（Win11）。</summary>
+    /// <param name="window">目标窗口。</param>
+    public static void ApplyRoundedCorners(Window window)
+    {
+        var handle = new WindowInteropHelper(window).Handle;
+        if (handle == IntPtr.Zero || Environment.OSVersion.Version.Build < 22000)
         {
-            var backdrop = 3;
-            if (NativeMethods.DwmSetWindowAttribute(handle, DwmSystemBackdropType, ref backdrop, sizeof(int)) == 0 &&
-                TrySetRoundedCorners(handle))
-            {
-                window.Background = Brushes.Transparent;
-                return true;
-            }
+            return;
         }
 
-        if (TryApplyAccent(handle, tint))
-        {
-            window.Background = Brushes.Transparent;
-            return true;
-        }
-
-        // 恢复实色，避免透明窗口透出桌面。
-        window.Background = window.TryFindResource("SurfaceBrush") as Brush ?? Brushes.White;
-        return false;
+        var preference = 2; // DWMWCP_ROUND
+        NativeMethods.DwmSetWindowAttribute(handle, DwmWindowCornerPreference, ref preference, sizeof(int));
     }
 
     /// <summary>给窗口加圆角区域（Win10 没有系统圆角，用区域裁剪）。</summary>
@@ -91,7 +154,8 @@ internal static class Backdrop
         if (Environment.OSVersion.Version.Build >= 22000)
         {
             // Win11 用 DWM 圆角，区域裁剪会把阴影切掉。
-            TrySetRoundedCorners(handle);
+            var preference = 2;
+            NativeMethods.DwmSetWindowAttribute(handle, DwmWindowCornerPreference, ref preference, sizeof(int));
             return;
         }
 
@@ -102,19 +166,82 @@ internal static class Backdrop
         }
     }
 
-    private static bool TrySetRoundedCorners(IntPtr handle)
+    private static BackdropResult ApplySystemBackdrop(IntPtr handle, bool dark, bool isFlyout)
     {
-        var preference = 2; // DWMWCP_ROUND
-        return NativeMethods.DwmSetWindowAttribute(handle, DwmWindowCornerPreference, ref preference, sizeof(int)) == 0;
+        // Win11 不需要（也不应该）扩边框：那会把标题栏也变成玻璃，深色标题栏被打乱。
+        var source = HwndSource.FromHwnd(handle);
+        var original = source?.CompositionTarget?.BackgroundColor;
+        if (source?.CompositionTarget is not null)
+        {
+            source.CompositionTarget.BackgroundColor = Colors.Transparent;
+        }
+
+        var kind = isFlyout ? BackdropAcrylic : BackdropMica;
+        if (NativeMethods.DwmSetWindowAttribute(handle, DwmSystemBackdropType, ref kind, sizeof(int)) == 0)
+        {
+            var preference = 2;
+            NativeMethods.DwmSetWindowAttribute(handle, DwmWindowCornerPreference, ref preference, sizeof(int));
+            return new BackdropResult(
+                isFlyout ? BackdropKind.Acrylic : BackdropKind.Mica,
+                true,
+                isFlyout ? "DWMSBT_TRANSIENTWINDOW" : "DWMSBT_MAINWINDOW");
+        }
+
+        if (source?.CompositionTarget is not null && original is { } color)
+        {
+            source.CompositionTarget.BackgroundColor = color;
+        }
+
+        LogOnce("Windows 11 系统材质不可用，退回实色背景");
+        return new BackdropResult(BackdropKind.Solid, false, "DWMSBT 失败");
     }
 
-    private static bool TryApplyAccent(IntPtr handle, uint tint)
+    private static BackdropResult ApplyAccent(IntPtr handle)
+    {
+        var source = HwndSource.FromHwnd(handle);
+        var original = source?.CompositionTarget?.BackgroundColor;
+        if (source?.CompositionTarget is not null)
+        {
+            source.CompositionTarget.BackgroundColor = Colors.Transparent;
+        }
+
+        // 只有 Win10 的 accent 路径需要把整个客户区扩成玻璃帧；失败时一并归零。
+        var margins = new NativeMethods.Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
+        NativeMethods.DwmExtendFrameIntoClientArea(handle, ref margins);
+
+        // tint 每次现取，不缓存：切主题后着色要跟着变。
+        var tint = ThemeManager.ResolveColor("AcrylicTint", Color.FromArgb(0x73, 0xFF, 0xFF, 0xFF));
+        if (TryApplyAccent(handle, ToAbgr(tint)))
+        {
+            return new BackdropResult(BackdropKind.Acrylic, true, "ACCENT_ENABLE_ACRYLICBLURBEHIND");
+        }
+
+        // 完整回滚：背景色 + 边框扩展，一个都不能留。
+        if (source?.CompositionTarget is not null && original is { } color)
+        {
+            source.CompositionTarget.BackgroundColor = color;
+        }
+
+        var zero = new NativeMethods.Margins();
+        NativeMethods.DwmExtendFrameIntoClientArea(handle, ref zero);
+
+        LogOnce("Windows 10 亚克力不可用，退回实色背景");
+        return new BackdropResult(BackdropKind.Solid, false, "accent 失败");
+    }
+
+    /// <summary>
+    /// 设置窗口合成属性里的强调色策略。
+    /// </summary>
+    /// <param name="handle">窗口句柄。</param>
+    /// <param name="gradientColor">着色，格式 <c>AABBGGRR</c>（注意不是 ARGB）。</param>
+    /// <returns>是否成功。</returns>
+    private static bool TryApplyAccent(IntPtr handle, int gradientColor)
     {
         var policy = new NativeMethods.AccentPolicy
         {
             AccentState = NativeMethods.ACCENT_ENABLE_ACRYLICBLURBEHIND,
             AccentFlags = 2,
-            GradientColor = unchecked((int)tint),
+            GradientColor = gradientColor,
             AnimationId = 0,
         };
 
@@ -145,5 +272,20 @@ internal static class Backdrop
         {
             Marshal.FreeHGlobal(pointer);
         }
+    }
+
+    /// <summary><c>Color</c> 是 ARGB，而 accent 的着色是 AABBGGRR。</summary>
+    private static int ToAbgr(Color color) =>
+        (color.A << 24) | (color.B << 16) | (color.G << 8) | color.R;
+
+    private static void LogOnce(string message)
+    {
+        if (_failureLogged)
+        {
+            return;
+        }
+
+        _failureLogged = true;
+        Log.Write(message);
     }
 }

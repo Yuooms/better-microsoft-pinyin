@@ -42,6 +42,12 @@ public sealed class AppSettings
     /// <summary>浮窗样式：<c>Card</c> 纯白卡片，<c>Acrylic</c> 亚克力。</summary>
     public string PopupStyle { get; set; } = "Card";
 
+    /// <summary>配色主题：<c>System</c> 跟随系统，<c>Light</c> 浅色，<c>Dark</c> 深色。</summary>
+    public string ThemeMode { get; set; } = "System";
+
+    /// <summary>窗口背景：<c>Auto</c> 按系统能力自动选择，<c>Solid</c> 纯色，<c>Acrylic</c> 强制亚克力。</summary>
+    public string BackdropMode { get; set; } = "Auto";
+
     /// <summary>英文状态下是否也联想（默认关，采纳会删除已输入的字母）。</summary>
     public bool EnglishModeAssistEnabled { get; set; }
 

@@ -15,9 +15,10 @@ namespace BetterPinyin.App.Shell;
 /// </remarks>
 public partial class NetworkPage : UserControl
 {
-    private static readonly Brush OkBrush = new SolidColorBrush(Color.FromRgb(0x0F, 0x7B, 0x0F));
-    private static readonly Brush WarnBrush = new SolidColorBrush(Color.FromRgb(0xB5, 0x4A, 0x00));
-    private static readonly Brush FailBrush = new SolidColorBrush(Color.FromRgb(0xC4, 0x2B, 0x1C));
+    // 颜色必须每次现取：切主题后旧画刷实例不会跟着变。
+    private static Brush OkBrush => ThemeManager.ResolveBrush("SuccessBrush") ?? Brushes.Green;
+    private static Brush WarnBrush => ThemeManager.ResolveBrush("WarningBrush") ?? Brushes.Orange;
+    private static Brush FailBrush => ThemeManager.ResolveBrush("ErrorBrush") ?? Brushes.Red;
 
     private readonly EndpointProbe _probe = new(Http.Client);
     private bool _probing;
@@ -122,10 +123,11 @@ public partial class NetworkPage : UserControl
         var detailText = new TextBlock
         {
             Text = detail,
-            Foreground = (Brush)Application.Current.Resources["TextSecondaryBrush"],
             TextWrapping = TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Center,
+            FontSize = 12,
         };
+        detailText.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondaryBrush");
 
         Grid.SetColumn(statusText, 1);
         Grid.SetColumn(detailText, 2);
@@ -138,13 +140,18 @@ public partial class NetworkPage : UserControl
 
     private void AddInfoText(string text)
     {
-        EnvironmentPanel.Children.Add(new TextBlock
+        var block = new TextBlock
         {
             Text = text,
-            Foreground = (Brush)Application.Current.Resources["TextSecondaryBrush"],
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 2, 0, 2),
-        });
+            FontSize = 12,
+        };
+        block.SetResourceReference(TextBlock.ForegroundProperty, "TextSecondaryBrush");
+
+        // 这些是「当前生效设置」，必须进 SettingsPanel；此前误加到 EnvironmentPanel，
+        // 导致页面底部那块永远是空的。
+        SettingsPanel.Children.Add(block);
     }
 
     private void AddRowToEndpointPanel(string name, bool ok, string detail)

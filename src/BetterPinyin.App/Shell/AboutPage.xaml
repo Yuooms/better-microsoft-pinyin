@@ -3,31 +3,47 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              FontFamily="Microsoft YaHei UI, Segoe UI">
 
-    <StackPanel MaxWidth="720" HorizontalAlignment="Left">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel MaxWidth="{DynamicResource PageMaxWidth}"
+                    Margin="{DynamicResource PagePadding}"
+                    HorizontalAlignment="Left">
 
-        <TextBlock Text="关于" Style="{StaticResource PageTitle}" />
-        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,14"
-                   Text="为 Windows 自带的微软拼音补充云联想能力的伴随程序。不替换输入法、不修改输入法本体，原有候选、快捷键与学习行为保持不变。" />
+            <TextBlock Text="关于" Style="{StaticResource PageTitle}" />
+            <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,4"
+                       Text="为 Windows 自带的微软拼音补充云联想能力的伴随程序。不替换输入法、不修改输入法本体，原有候选、快捷键与学习行为保持不变。" />
 
-        <TextBlock Text="隐私" Style="{StaticResource SectionTitle}" />
-        <TextBlock Style="{StaticResource Hint}"
-                   Text="只把当前输入串发给你选择使用的搜索建议接口，不发送正在输入的应用名、上下文或任何可识别身份的信息。配置与日志全部保存在本机。" />
+            <TextBlock Text="隐私" Style="{StaticResource SectionTitle}" />
+            <Border Style="{StaticResource Card}" Padding="16,14">
+                <TextBlock Style="{StaticResource Hint}" FontSize="13" LineHeight="22"
+                           Text="只把当前输入串发给你选择使用的搜索建议接口，不发送正在输入的应用名、上下文或任何可识别身份的信息。配置与日志全部保存在本机。" />
+            </Border>
 
-        <TextBlock Text="工作方式" Style="{StaticResource SectionTitle}" />
-        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,6"
-                   Text="1. 通过系统级键盘钩子感知按键，重建你正在输入的拼音串。" />
-        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,6"
-                   Text="2. 停手后向搜索建议接口查询，用读音规则过滤掉对不上的结果。" />
-        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,6"
-                   Text="3. 候选窗旁弹出浮窗显示云词，按采纳键后取消组字并上屏。" />
+            <TextBlock Text="工作方式" Style="{StaticResource SectionTitle}" />
+            <Border Style="{StaticResource Card}" Padding="16,14">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource Hint}" FontSize="13" LineHeight="22"
+                               Text="1. 通过系统级键盘钩子感知按键，重建你正在输入的拼音串。" />
+                    <TextBlock Style="{StaticResource Hint}" FontSize="13" LineHeight="22" Margin="0,6,0,0"
+                               Text="2. 停手后向搜索建议接口查询，用读音规则过滤掉对不上的结果。" />
+                    <TextBlock Style="{StaticResource Hint}" FontSize="13" LineHeight="22" Margin="0,6,0,0"
+                               Text="3. 候选窗旁弹出浮窗显示云词，按采纳键后取消组字并上屏。" />
+                </StackPanel>
+            </Border>
 
-        <TextBlock Text="已知限制" Style="{StaticResource SectionTitle}" />
-        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,6"
-                   Text="• 以管理员身份运行的程序里无法上屏（系统权限隔离）。" />
-        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,6"
-                   Text="• 全屏独占游戏与部分反作弊环境不支持。" />
-        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,6"
-                   Text="• 纯缩写（如 ystl）依赖内置词库展开，未收录的专名命中率有限。" />
+            <TextBlock Text="已知限制" Style="{StaticResource SectionTitle}" />
+            <Border Style="{StaticResource Card}" Padding="16,14">
+                <StackPanel>
+                    <TextBlock Style="{StaticResource Hint}" FontSize="13" LineHeight="22"
+                               Text="• 以管理员身份运行的程序里无法上屏（系统权限隔离）。" />
+                    <TextBlock Style="{StaticResource Hint}" FontSize="13" LineHeight="22" Margin="0,6,0,0"
+                               Text="• 全屏独占游戏与部分反作弊环境不支持。" />
+                    <TextBlock Style="{StaticResource Hint}" FontSize="13" LineHeight="22" Margin="0,6,0,0"
+                               Text="• 纯缩写（如 ystl）依赖内置词库展开，未收录的专名命中率有限。" />
+                    <TextBlock Style="{StaticResource Hint}" FontSize="13" LineHeight="22" Margin="0,6,0,0"
+                               Text="• 托盘右键菜单由系统绘制，深色主题下仍为浅色。" />
+                </StackPanel>
+            </Border>
 
-    </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
 </UserControl>

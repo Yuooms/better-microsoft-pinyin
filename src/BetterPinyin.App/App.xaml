@@ -4,46 +4,15 @@
              ShutdownMode="OnExplicitShutdown">
     <Application.Resources>
         <ResourceDictionary>
-
-            <!-- 浅色主题的少量基础设施色板，避免引入第三方 UI 库 -->
-            <SolidColorBrush x:Key="TextPrimaryBrush" Color="#1F2328" />
-            <SolidColorBrush x:Key="TextSecondaryBrush" Color="#6B7280" />
-            <SolidColorBrush x:Key="SurfaceBrush" Color="#FFFFFF" />
-            <SolidColorBrush x:Key="SurfaceAltBrush" Color="#F6F7F9" />
-            <SolidColorBrush x:Key="BorderBrush" Color="#E4E7EC" />
-            <SolidColorBrush x:Key="AccentBrush" Color="#0F6CBD" />
-            <SolidColorBrush x:Key="AccentSoftBrush" Color="#EAF2FB" />
-
-            <Style TargetType="TextBlock">
-                <Setter Property="Foreground" Value="{StaticResource TextPrimaryBrush}" />
-                <Setter Property="FontFamily" Value="Microsoft YaHei UI, Segoe UI" />
-                <Setter Property="FontSize" Value="13" />
-            </Style>
-
-            <Style x:Key="PageTitle" TargetType="TextBlock">
-                <Setter Property="FontSize" Value="22" />
-                <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="Margin" Value="0,0,0,4" />
-            </Style>
-
-            <Style x:Key="SectionTitle" TargetType="TextBlock">
-                <Setter Property="FontSize" Value="14" />
-                <Setter Property="FontWeight" Value="SemiBold" />
-                <Setter Property="Margin" Value="0,18,0,8" />
-            </Style>
-
-            <Style x:Key="Hint" TargetType="TextBlock">
-                <Setter Property="Foreground" Value="{StaticResource TextSecondaryBrush}" />
-                <Setter Property="FontSize" Value="12" />
-                <Setter Property="TextWrapping" Value="Wrap" />
-            </Style>
-
-            <!--
-                控件本身不设样式：CheckBox / TextBox / ComboBox / Button 全部使用 WPF 的
-                系统默认模板（Aero2），与资源管理器、系统设置里的控件观感一致。
-                这里只保留文字排版与少量语义色，避免出现"网页化"的自绘控件。
-            -->
-
+            <ResourceDictionary.MergedDictionaries>
+                <!--
+                    索引 0 必须是可替换的配色字典：ThemeManager 切换主题时整体替换这一项。
+                    整项替换才会让所有 DynamicResource 重新求值，所以顺序不能变。
+                -->
+                <ResourceDictionary Source="Themes/Colors.Light.xaml" />
+                <ResourceDictionary Source="Themes/Metrics.xaml" />
+                <ResourceDictionary Source="Themes/Controls.xaml" />
+            </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

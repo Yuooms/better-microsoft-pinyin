@@ -172,9 +172,24 @@ internal sealed class CloudAssistController : IDisposable
             return;
         }
 
-        // 提交过程中按住不放产生的自动重复，继续吞掉，否则正文会冒出 666。
-        if (Volatile.Read(ref _acceptInProgress) != 0 && _swallowUntilKeyUp.Contains(e.VirtualKey))
+        // 已经吞下、但还没抬起的键：连同自动重复一起继续吞，否则正文会冒出 666。
+        if (_swallowUntilKeyUp.Contains(e.VirtualKey))
         {
+            e.Handled = true;
+            return;
+        }
+
+        // 提交窗口（Esc → 候选窗消失 → 上屏，约 100~150ms）内不接受新输入。
+        // 采纳流程已移出钩子线程，钩子会立刻返回；此时用户敲的键会插到 Esc 与上屏之间，
+        // 正文里就会混进半截字母。修饰键放行，避免 Shift/Ctrl 状态错乱。
+        if (Volatile.Read(ref _acceptInProgress) != 0)
+        {
+            if (IsModifierKey(e.VirtualKey))
+            {
+                return;
+            }
+
+            _swallowUntilKeyUp.Add(e.VirtualKey);
             e.Handled = true;
             return;
         }
@@ -202,14 +217,42 @@ internal sealed class CloudAssistController : IDisposable
             // 注意不要在这里 Reset：Reset 会递增代次，上屏前的“组字是否变化”校验就永远失败。
             Clear();
 
-            _ = mode == InputMode.English
-                ? CommitEnglishAsync(target, query, version, foreground, caret, generation)
-                : CommitAsync(target, query, version, handle, generation);
+            // 采纳流程里有同步的 UIA 读取（复核数字键、等候选窗消失），单次上限 400ms。
+            // 留在钩子线程上会阻塞整条键盘输入链，所以整体挪到线程池。
+            // 注意不能用 Task.Yield()：它会把续体投回 Dispatcher，而 Dispatcher 就是钩子线程。
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    if (mode == InputMode.English)
+                    {
+                        await CommitEnglishAsync(target, query, version, foreground, caret, generation)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await CommitAsync(target, query, version, handle, generation)
+                            .ConfigureAwait(false);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // 两条 Commit 自己都有 try/catch，这里兜住参数求值等同步异常，
+                    // 否则 _acceptInProgress 会永远停在 1，之后所有按键都会被吞掉。
+                    Report($"采纳流程异常：{ex.GetType().Name} {ex.Message}");
+                    Volatile.Write(ref _acceptInProgress, 0);
+                }
+            });
+
             return;
         }
 
         _tracker.Feed(e.VirtualKey, e.IsKeyDown, modifiers, e.IsOwnInjection);
     }
+
+    /// <summary>修饰键本身不参与「提交窗口内吞键」，否则 Shift/Ctrl 状态会错乱。</summary>
+    private static bool IsModifierKey(int virtualKey) =>
+        virtualKey is 0x10 or 0x11 or 0x12 or 0x14 or 0x5B or 0x5C;
 
     private void OnCompositionChanged(object? sender, CompositionChangedEventArgs e)
     {

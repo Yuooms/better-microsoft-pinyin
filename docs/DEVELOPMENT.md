@@ -60,8 +60,13 @@ dotnet run --project tools/ImeProbe -- --self-test yisitalu --accept=oem3
 dotnet run --project tools/ImeProbe -- --self-test ruonawa --accept=6 --english
 
 # 摆窗口 + 截图，便于核对界面
-dotnet run --project tools/ImeProbe -- --activate-app --move-app=300,80,940,660
+dotnet run --project tools/ImeProbe -- --activate-app --move-app=300,80,1000,700
+
+# 发按键验证真实交互：Tab 到第 4 个控件，再用 F4 打开下拉框（十六进制 VK，d/u 前缀表示只按下/抬起）
+dotnet run --project tools/ImeProbe -- --activate-app --send-keys=09,09,09,09,73
 ```
+
+界面相关还有一个开发参数：`dotnet run --project src/BetterPinyin.App -- --page=外观` 可以直接打开指定的设置页（页名与左侧导航一致），省去手点。
 
 `BetterPinyin.Tests -- --probe <拼音> candidate=<候选>` 可以单独观察某个候选的读音判定结果（`Strict` / `Extended` / `None`），排查"为什么这个词没出现"时最直接。
 

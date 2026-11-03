@@ -166,8 +166,14 @@ public static class NativeMethods
     /// <summary>保持位置不变。</summary>
     public const uint SWP_NOMOVE = 0x0002;
 
+    /// <summary>保持 Z 序不变。</summary>
+    public const uint SWP_NOZORDER = 0x0004;
+
     /// <summary>不激活窗口。</summary>
     public const uint SWP_NOACTIVATE = 0x0010;
+
+    /// <summary>强制重新计算非客户区（改标题栏颜色后需要一次）。</summary>
+    public const uint SWP_FRAMECHANGED = 0x0020;
 
     /// <summary>显示窗口。</summary>
     public const uint SWP_SHOWWINDOW = 0x0040;
@@ -594,7 +600,14 @@ public static class NativeMethods
             }
         }
 
-        Thread.Sleep(120);
+        // 以前这里定长睡 120ms，而调用点在 UI 线程上，等于每次打开设置窗口先冻 120ms。
+        // 实际绝大多数情况几毫秒就切换完成，改成短间隔轮询。
+        var deadline = Environment.TickCount64 + 50;
+        while (GetForegroundWindow() != hWnd && Environment.TickCount64 < deadline)
+        {
+            Thread.Sleep(5);
+        }
+
         return GetForegroundWindow() == hWnd;
     }
 }

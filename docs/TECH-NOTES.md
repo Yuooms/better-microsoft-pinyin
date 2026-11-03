@@ -148,3 +148,102 @@ SendInput(Esc)
 - **分层要跟系统一致**：系统「设置」只让侧边栏透出模糊，内容区接近不透明。整窗都用低透明度会让长文本在彩色壁纸上难以阅读。本项目的设置窗口采用同样的分层：导航 `#1FFFFFFF`，内容区 `#F7FFFFFF`。
 
 失败时一律恢复实色背景并记日志——宁可看起来普通，也不要出现一块黑底或直接透出桌面。
+
+## 十三、WPF 里怎么"用系统控件"
+
+WPF 没有 Fluent 控件。它的默认模板（Aero2）是 2012 年的外观：方形勾选框、带渐变的按钮、
+带独立箭头区的下拉框。系统「设置」用的是 UWP/WinUI 那一套。两者不是同一技术栈，
+**没法"直接调用系统控件"**，只能按系统的实际尺寸和配色重绘模板。标题栏、滚动条之外的
+系统菜单仍由 Windows 绘制。
+
+重绘时最容易踩的是模板部件名——写错不报错，只是交互静默失效：
+
+| 控件 | 必需部件 | 写错的后果 |
+|---|---|---|
+| `TextBox` | `PART_ContentHost`（类型必须是 `ScrollViewer`） | 文字完全不显示 |
+| `ComboBox` | `PART_Popup` | 下拉永远打不开，且不抛异常 |
+| `ScrollBar` | `PART_Track`，以及 `Track` 里的 `DecreaseRepeatButton` / `Thumb` / `IncreaseRepeatButton` | 没有滑块、不能翻页 |
+
+另外几条经验：
+
+1. **`CheckBox` 改成胶囊开关，但不要换控件类型**。`IsChecked`、Space 切换、Tab 聚焦、
+   读屏名字全都来自类型本身，与模板无关。`ContentPresenter` 必须保留（可以 `Collapsed`），
+   否则读屏软件读不到名字；文案则挪到设置行的标题里。
+2. **`ComboBox` 内部必须重写 `ToggleButton` 的模板**，否则 Aero2 的灰色按钮会铺满整个下拉框，
+   出现双层边框。`IsChecked` 绑 `IsDropDownOpen` 必须是 `TwoWay`；显示区要 `IsHitTestVisible=False`，
+   否则点文字区域打不开。
+3. **不要给 Popup 设 `StaysOpen=False`**。ComboBox 自己管理"点外面关闭"并同步状态，
+   Popup 抢先关掉会让 `IsDropDownOpen` 残留为 true，表现为按钮一直高亮、再点一次没反应。
+4. **下拉项用 `IsHighlighted` 而不是 `IsMouseOver`**，否则键盘上下移动时没有高亮，
+   用户不知道回车会选哪一项。
+5. **触发器里不要给颜色属性赋 `DynamicResource`**。只换字典、不换状态时，触发器不会重新求值。
+   统一改成"前景色叠加层 + 只改 `Opacity`"，浅色下压暗、深色下提亮，一套代码通吃。
+
+## 十四、主题字典与动态资源
+
+配色拆成 `Colors.Light.xaml` / `Colors.Dark.xaml` 两个键名完全一致的字典，固定在
+`App.Resources.MergedDictionaries[0]`；切换主题时**整项替换**：
+
+```csharp
+dictionaries[0] = new ResourceDictionary { Source = new Uri("Themes/Colors.Dark.xaml", UriKind.Relative) };
+```
+
+只有整项替换才会触发 WPF 的失效链，让所有 `DynamicResource` 重新求值。改单个 key、
+或往一个不在元素查找链上的字典里塞值，都不会刷新。
+
+几条必须知道的边界：
+
+- `Style="{StaticResource ...}"` 可以保留：样式对象本身不随主题变。
+- **但颜色属性必须用 `DynamicResource`**，而且元素上的本地值优先级最高——
+  代码里 `textBlock.Foreground = brush` 会让样式与动态资源一起失效，切主题后颜色停在旧值。
+  代码生成的控件用 `SetResourceReference(TextBlock.ForegroundProperty, "TextSecondaryBrush")`。
+- **控件没有隐式 `Foreground` 样式**。隐式 `TextBlock` 样式不会作用到 `ContentPresenter`
+  生成的文字上，所以 CheckBox / ComboBox / Button 的样式里都要显式设 `Foreground`，
+  模板里再用 `TemplateBinding` 传给内容区。
+- `DynamicResource` **找不到键不抛异常**，只是保留原值。表现为"某个字还是黑的"，极难排查。
+  因此 `ThemeManager.Validate()` 在启动时把必需键逐个 `TryFindResource` 一遍，缺了就写日志。
+
+深色下的两个取值细节：强调色用 `#60CDFF`（浅色的 `#005FB8` 在深色底上几乎看不见）；
+亚克力着色用 `#99000000`（60% 黑），浅色的 45% 白在深色壁纸上会显得发灰。
+
+标题栏要单独调 `DWMWA_USE_IMMERSIVE_DARK_MODE`（build ≥ 18985 用序号 20，否则 19），
+并在之后补一次 `SetWindowPos(SWP_FRAMECHANGED)`，否则部分 19041/19042 不会重绘非客户区。
+
+## 十五、Win10 亚克力为什么会让拖动卡住
+
+`SetWindowCompositionAttribute(ACCENT_ENABLE_ACRYLICBLURBEHIND)` 配合
+`DwmExtendFrameIntoClientArea(-1)` 与透明的 `CompositionTarget.BackgroundColor`，
+等于告诉 DWM："整个客户区都是玻璃，背后的桌面要实时模糊。"
+
+拖动时窗口下方的画面在变，DWM 就不能复用上一帧，必须每帧重新采样并重新高斯模糊整个窗口
+（940×660 约 62 万像素）。Win11 的 `DWMWA_SYSTEMBACKDROP_TYPE` 是合成器内部的预设路径，
+代价低得多；Win10 的 accent 是未公开实现，拖起来就是掉帧。
+
+更不划算的是：满窗模糊里真正可见的只有左侧导航条那 228px，内容区 97% 不透明把它盖住了。
+
+所以现在的策略是：Win11 自动用 Mica（系统「设置」自己的选择），Win10 默认纯色，
+只有用户在「外观」页显式选择才启用亚克力。`Backdrop.Apply` 在"不启用"时
+**完全不碰合成状态**，窗口保持普通不透明窗口，拖动走 DWM 的常规优化。
+
+失败回滚也必须完整：只还原 `Window.Background` 而留下透明的 `BackgroundColor`
+与 `-1` 的边框扩展，会得到"透明但没模糊"的窗口，直接透出桌面。
+
+## 十六、采纳流程为什么必须离开钩子线程
+
+低级键盘钩子的回调运行在安装线程上，而本项目是在 WPF UI 线程安装的——
+所以"钩子线程"就是"UI 线程"，系统对每一次按键都要等它返回。
+
+采纳流程里有同步的 UIA 读取：数字键复核的 `ReadBest(80)`，以及等候选窗消失时
+首次 `Read`（单次上限 400ms）。这些都在第一个真正的 `await` 之前执行，
+最坏情况会把整机键盘堵住约 0.8~1 秒。
+
+`Task.Yield()` 解决不了：它会把续体投回 `DispatcherSynchronizationContext`，
+而 Dispatcher 就是钩子线程本身。必须整体 `Task.Run` 到线程池。
+
+搬走之后有两个新问题必须一起处理：
+
+1. `_tracker.Reset()` 变成跨线程写。`CompositionTracker` 的所有入口（`Feed` / `Reset` /
+   `End` / `Backspace` / `Version`）走同一把可重入锁。
+2. 钩子立刻返回后，用户在"Esc → 上屏"这 100~150ms 内敲的键会插进中间，
+   正文里冒出半截字母。所以 `_acceptInProgress` 期间要吞掉除修饰键外的所有 keydown，
+   并在抬起时一并吞掉 keyup。

@@ -27,6 +27,7 @@ public partial class App : Application
     private CloudAssistFeature? _cloudAssist;
     private FeatureRegistry? _registry;
     private SettingsWindow? _settingsWindow;
+    private string? _startupPage;
 
     /// <inheritdoc />
     protected override void OnStartup(StartupEventArgs e)
@@ -50,10 +51,19 @@ public partial class App : Application
             AppDomain.CurrentDomain.UnhandledException += (_, args) =>
                 Log.Error("AppDomain", args.ExceptionObject as Exception ?? new Exception("未知异常"));
 
+            // 兜底：OnExit 里抛异常时仍能把日志队列刷完。
+            AppDomain.CurrentDomain.ProcessExit += (_, _) => Log.Shutdown(500);
+
             Log.Write("程序启动");
 
             AppServices.Initialize();
             Log.Write($"设置已加载：{AppServices.Store.FilePath}；UIA 可用={AppServices.UiaAvailable}");
+
+            // 主题必须在创建任何窗口之前定下来：窗口的 SourceInitialized 会读当前主题
+            // 去设标题栏与背景材质。
+            ThemeManager.Initialize(AppearanceOptions.ParseTheme(AppServices.Settings.ThemeMode));
+            ThemeManager.Validate();
+            SystemTheme.Start();
 
             _registry = new FeatureRegistry();
             _cloudAssist = new CloudAssistFeature(AppServices.Settings);
@@ -69,9 +79,14 @@ public partial class App : Application
             _ = StartFeaturesAsync();
 
             // 首次运行（还没有配置文件）直接把设置打开，避免用户以为程序没启动。
-            // --settings 便于开发时直接进设置页核对界面。
+            // --settings 便于开发时直接进设置页核对界面；--page=外观 可直达某一页。
+            _startupPage = e.Args
+                .FirstOrDefault(arg => arg.StartsWith("--page=", StringComparison.OrdinalIgnoreCase))
+                ?["--page=".Length..];
+
             if (!File.Exists(AppServices.Store.FilePath) ||
-                e.Args.Any(arg => arg.Equals("--settings", StringComparison.OrdinalIgnoreCase)))
+                e.Args.Any(arg => arg.Equals("--settings", StringComparison.OrdinalIgnoreCase)) ||
+                _startupPage is not null)
             {
                 ShowSettings();
             }
@@ -105,8 +120,13 @@ public partial class App : Application
         }
         finally
         {
+            SystemTheme.Stop();
+
             _singleInstanceMutex?.ReleaseMutex();
             _singleInstanceMutex?.Dispose();
+
+            // 日志是后台线程写的：这里等它把队列刷完，最多 1.5 秒。
+            Log.Shutdown();
         }
 
         base.OnExit(e);
@@ -159,6 +179,12 @@ public partial class App : Application
             }
 
             Log.Write("设置窗口已打开");
+
+            if (_startupPage is not null)
+            {
+                _settingsWindow.SelectPage(_startupPage);
+                _startupPage = null;
+            }
         }
         catch (Exception ex)
         {

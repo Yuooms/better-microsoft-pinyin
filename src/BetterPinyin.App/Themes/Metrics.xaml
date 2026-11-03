@@ -1,0 +1,29 @@
+<!--
+    度量值。这里放的是 Windows 11 的取值；ThemeManager 在启动时若检测到
+    Windows 10，会把圆角、控件高度、行高、内边距改成 Win10 的对应值。
+    之所以不拆成两份字典：这些值只在启动时决定一次，运行时不会变，
+    用代码覆盖比维护两个几乎相同的文件更不容易出错。
+-->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+
+    <!-- 圆角：Win11 4px / Win10 2px -->
+    <CornerRadius x:Key="ControlCornerRadius">4</CornerRadius>
+    <CornerRadius x:Key="CardCornerRadius">4</CornerRadius>
+    <CornerRadius x:Key="FlyoutCornerRadius">8</CornerRadius>
+
+    <!-- 输入控件高度：Win11 32 / Win10 30 -->
+    <sys:Double x:Key="ControlHeight">32</sys:Double>
+
+    <!-- 设置行最小高度：Win11 52 / Win10 48 -->
+    <sys:Double x:Key="RowMinHeight">52</sys:Double>
+
+    <!-- 页面内容宽度与内边距 -->
+    <sys:Double x:Key="PageMaxWidth">680</sys:Double>
+    <Thickness x:Key="PagePadding">32,24,32,32</Thickness>
+
+    <!-- 滚动条宽度：Win10 的滚动条更宽一点 -->
+    <sys:Double x:Key="ScrollBarThickness">12</sys:Double>
+
+</ResourceDictionary>

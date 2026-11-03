@@ -73,6 +73,58 @@ internal static class Program
             }
 
             Console.WriteLine(ok ? "[置前] 已切到前台" : "[置前] 系统拒绝置前");
+
+            // 按键脚本：逗号分隔，12 表示按下并抬起，d12/u12 表示只按下/只抬起（十六进制）。
+            // 用来验证下拉框、开关这类真实交互——模板写坏时界面看不出问题，键盘一按就露馅。
+            var keysArg = args.FirstOrDefault(a => a.StartsWith("--send-keys=", StringComparison.OrdinalIgnoreCase));
+            if (keysArg is not null)
+            {
+                Thread.Sleep(300);
+                var sent = 0;
+                foreach (var token in keysArg["--send-keys=".Length..]
+                             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    var mode = token[0];
+                    var body = token;
+                    var down = false;
+                    var up = false;
+                    if (mode is 'd' or 'D')
+                    {
+                        down = true;
+                        body = token[1..];
+                    }
+                    else if (mode is 'u' or 'U')
+                    {
+                        up = true;
+                        body = token[1..];
+                    }
+
+                    if (!ushort.TryParse(body, System.Globalization.NumberStyles.HexNumber,
+                            System.Globalization.CultureInfo.InvariantCulture, out var virtualKey))
+                    {
+                        continue;
+                    }
+
+                    if (down)
+                    {
+                        KeySender.SendKeyState(virtualKey, true, markAsOwn: false);
+                    }
+                    else if (up)
+                    {
+                        KeySender.SendKeyState(virtualKey, false, markAsOwn: false);
+                    }
+                    else
+                    {
+                        KeySender.SendVirtualKey(virtualKey, markAsOwn: false);
+                    }
+
+                    sent++;
+                    Thread.Sleep(110);
+                }
+
+                Console.WriteLine($"[按键] 已发送 {sent} 个");
+            }
+
             return ok ? 0 : 2;
         }
 

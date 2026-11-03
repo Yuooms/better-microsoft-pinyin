@@ -106,8 +106,28 @@
 |---|---|---|
 | 键盘钩子 | 安装它的线程（UI 线程） | 回调内禁止任何 I/O 与跨进程调用，否则整机输入会卡顿 |
 | 云端查询 | 线程池 | 结果回投时必须校验组字代次，代次不符直接丢弃 |
+| 采纳上屏 | 线程池（`Task.Run`） | 里面有同步 UIA 读取；留在钩子线程会把整机键盘堵住约 1 秒。提交窗口内吞掉非修饰键 |
 | UIA 读取 | 专用 STA 线程（`UiaWorker`） | 串行执行 + 带超时；超时后放弃结果，不阻塞调用方 |
 | 浮窗 | UI 线程 | 事件从后台线程回投时经 `Dispatcher` 切回 |
+
+## 外观与主题
+
+```
+src/BetterPinyin.App/Themes/
+  Colors.Light.xaml / Colors.Dark.xaml   键名完全一致的配色，索引 0 可整体替换
+  Metrics.xaml                           圆角/控件高/行高，启动时按系统版本调整
+  Controls.xaml                          七个控件模板 + SettingRow/Card
+src/BetterPinyin.App/Shell/
+  ThemeManager.cs                        主题切换、资源解析、启动自检
+  SystemTheme.cs                         读「应用模式」并监听系统变化
+  ShellChrome.cs                         窗口背景与标题栏的唯一入口
+```
+
+三条约束：
+
+1. **颜色一律 `DynamicResource`**。切主题是整字典替换，静态引用不会刷新；代码里赋过的画刷也不会。
+2. **`Controls.xaml` 里不许出现跨字典的 `StaticResource`**，解析期找不到键会直接抛异常。
+3. **背景与标题栏只在 `ShellChrome` 里决定**。Win11 走 `DWMWA_SYSTEMBACKDROP_TYPE`（设置窗口 Mica、浮窗 Acrylic），Win10 默认纯色；失败时回滚合成状态并铺实色。
 
 ## 配置与数据
 
