@@ -12,6 +12,43 @@
             <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,4"
                        Text="为 Windows 自带的微软拼音补充云联想能力的伴随程序。不替换输入法、不修改输入法本体，原有候选、快捷键与学习行为保持不变。" />
 
+            <TextBlock Text="形象" Style="{StaticResource SectionTitle}" />
+            <Border Style="{StaticResource Card}" Padding="20,16">
+                <StackPanel Orientation="Horizontal">
+                    <StackPanel Width="170" Margin="0,0,18,0">
+                        <Image Source="pack://application:,,,/assets/brand/logo0.png"
+                               Width="150"
+                               Height="150"
+                               Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="HighQuality" />
+                        <TextBlock Text="主视觉"
+                                   Style="{StaticResource Hint}"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,6,0,0" />
+                    </StackPanel>
+
+                    <StackPanel Width="170" Margin="0,0,18,0">
+                        <Image Source="pack://application:,,,/assets/brand/logo1.png"
+                               Width="150"
+                               Height="150"
+                               Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="HighQuality" />
+                        <TextBlock Text="应用图标"
+                                   Style="{StaticResource Hint}"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,6,0,0" />
+                    </StackPanel>
+
+                    <TextBlock Width="340"
+                               VerticalAlignment="Center"
+                               Style="{StaticResource Hint}"
+                               FontSize="13"
+                               LineHeight="22"
+                               TextWrapping="Wrap"
+                               Text="右侧形象同时用作 exe、任务栏与托盘图标。两张图也会出现在 README 顶部，作为项目介绍。" />
+                </StackPanel>
+            </Border>
+
             <TextBlock Text="隐私" Style="{StaticResource SectionTitle}" />
             <Border Style="{StaticResource Card}" Padding="16,14">
                 <TextBlock Style="{StaticResource Hint}" FontSize="13" LineHeight="22"

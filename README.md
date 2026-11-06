@@ -1,5 +1,11 @@
 # Better Microsoft Pinyin
 
+<p align="center">
+  <img src="assets/brand/logo0.png" width="200" alt="Better Microsoft Pinyin 主视觉">
+  &nbsp;&nbsp;&nbsp;
+  <img src="assets/brand/logo1.png" width="200" alt="Better Microsoft Pinyin 应用图标">
+</p>
+
 给 Windows 自带的**微软拼音**补上云联想：输入词库里没有的词（游戏角色名、专有名词、新词）时，从 Bing 搜索建议取回候选，显示在候选条旁边，按一下采纳键即可上屏。
 
 不替换输入法、不注入进程、不修改微软拼音本体。原有候选、快捷键、自学习行为完全不变；关掉本程序，一切恢复原状。
@@ -87,7 +93,9 @@ src/BetterPinyin.App         WPF 客户端（托盘、浮窗、设置）
 src/BetterPinyin.Tests       零依赖测试
 tools/ImeProbe               输入法环境诊断探针
 tools/LexiconBuilder         内置词库构建器
+tools/BrandBuilder           品牌图片与 app.ico 生成器（仅标准库）
 assets/lexicon.bin           内置词库（构建产物，随仓库提交）
+assets/brand/                应用图标与介绍图（由 LOGO/ 源图生成）
 docs/                        架构、开发、扩展、排障、词库、路线图
 ```
 

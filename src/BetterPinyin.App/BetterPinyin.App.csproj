@@ -13,7 +13,19 @@
          因此保留清单配置并屏蔽该提示。 -->
     <NoWarn>$(NoWarn);WFAC010</NoWarn>
     <Description>为微软拼音提供云联想的伴随程序。</Description>
+    <!-- exe 的图标：LOGO1 生成的多尺寸 ICO，见 tools/BrandBuilder/build-assets.py -->
+    <ApplicationIcon>..\..\assets\brand\app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      品牌资源同时供窗口标题栏、托盘图标和「关于」页使用。
+      Link 决定 pack URI：pack://application:,,,/assets/brand/xxx
+    -->
+    <Resource Include="..\..\assets\brand\app.ico" Link="assets\brand\app.ico" />
+    <Resource Include="..\..\assets\brand\logo0.png" Link="assets\brand\logo0.png" />
+    <Resource Include="..\..\assets\brand\logo1.png" Link="assets\brand\logo1.png" />
+  </ItemGroup>
 
   <ItemGroup>
     <!--

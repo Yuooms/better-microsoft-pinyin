@@ -3,6 +3,7 @@
                  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
                  xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
                  Title="Better 微软拼音"
+                 Icon="pack://application:,,,/assets/brand/app.ico"
                  Width="1080"
                  Height="720"
                  MinWidth="900"
@@ -37,7 +38,11 @@
 
         <ui:TitleBar Grid.Row="0"
                      Height="48"
-                     Title="Better 微软拼音" />
+                     Title="Better 微软拼音">
+            <ui:TitleBar.Icon>
+                <ui:ImageIcon Source="pack://application:,,,/assets/brand/app.ico" />
+            </ui:TitleBar.Icon>
+        </ui:TitleBar>
 
         <ui:NavigationView x:Name="RootNavigation"
                            Grid.Row="1"

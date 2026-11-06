@@ -81,10 +81,27 @@ internal sealed class TrayIcon : IDisposable
     }
 
     /// <summary>
-    /// 运行时绘制一个简单图标，避免为一张 16x16 的图引入资源文件。
+    /// 托盘图标。优先复用 exe 内嵌的 ICO，保证 exe、任务栏、托盘三处一致；
+    /// 资源缺失时才退回运行时绘制，托盘不能因为图标问题而不显示。
     /// </summary>
     private static Icon CreateIcon()
     {
+        try
+        {
+            var resource = System.Windows.Application.GetResourceStream(
+                new Uri("pack://application:,,,/assets/brand/app.ico", UriKind.Absolute));
+
+            if (resource is not null)
+            {
+                using var stream = resource.Stream;
+                return new Icon(stream, new Size(32, 32));
+            }
+        }
+        catch (Exception ex) when (ex is System.IO.IOException or ArgumentException or UriFormatException)
+        {
+            Log.Write($"托盘图标加载失败，改用运行时绘制：{ex.GetType().Name} {ex.Message}");
+        }
+
         using var bitmap = new Bitmap(32, 32);
         using (var graphics = Graphics.FromImage(bitmap))
         {

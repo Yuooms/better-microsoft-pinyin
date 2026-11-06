@@ -110,8 +110,24 @@ src/BetterPinyin.App/         WPF 客户端与界面
 如果还原仍然失败：
 
 1. 确认能访问 `mirrors.huaweicloud.com` 或 `api.nuget.org` 其中之一。
-2. 项目本身不引包，只有测试工程与 WPF 需要还原 SDK 内置组件。
+2. 运行期只引 `WPF-UI` 一个 NuGet 包；其余 Win32 / COM 互操作都是手写，不需要还原。
 3. 提交 issue 时附上 `dotnet --info` 与还原报错。
+
+## 品牌资源
+
+应用图标与介绍图由 `LOGO/` 下的 2048px 源图生成，脚本只用 Python 标准库：
+
+```bash
+python tools/BrandBuilder/build-assets.py
+```
+
+输出：
+
+- `assets/brand/logo0.png` / `logo1.png`：512px，关于页与 README 使用
+- `assets/brand/app.ico`：16/24/32/48/64/128/256 七个尺寸
+
+`LOGO/` 是本地设计源，已在 `.gitignore` 中忽略；换图后重新执行脚本即可。
+`app.ico` 同时供 `ApplicationIcon`（exe）、窗口标题栏与托盘图标使用，三处保持一致。
 
 ## 发布
 
