@@ -26,6 +26,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!--
+      设置窗口的 Fluent 控件、导航与标题栏。MIT 许可，版权声明见 THIRD-PARTY-NOTICES.md。
+      候选浮窗不使用它：无焦点、点击穿透的窗口 WPF-UI 接管不了。
+    -->
+    <PackageReference Include="WPF-UI" Version="4.3.0" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\BetterPinyin.Contracts\BetterPinyin.Contracts.csproj" />
     <ProjectReference Include="..\BetterPinyin.Core\BetterPinyin.Core.csproj" />
     <ProjectReference Include="..\BetterPinyin.Interop\BetterPinyin.Interop.csproj" />

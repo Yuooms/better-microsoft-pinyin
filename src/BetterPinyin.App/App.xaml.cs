@@ -3,6 +3,8 @@ using System.IO;
 using System.Threading;
 using System.Windows;
 using System.Windows.Interop;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using BetterPinyin.Interop.Windowing;
 using BetterPinyin.App.Features.CloudAssist;
@@ -28,6 +30,7 @@ public partial class App : Application
     private FeatureRegistry? _registry;
     private SettingsWindow? _settingsWindow;
     private string? _startupPage;
+    private string? _uiShotPath;
 
     /// <inheritdoc />
     protected override void OnStartup(StartupEventArgs e)
@@ -61,8 +64,21 @@ public partial class App : Application
 
             // 主题必须在创建任何窗口之前定下来：窗口的 SourceInitialized 会读当前主题
             // 去设标题栏与背景材质。
-            ThemeManager.Initialize(AppearanceOptions.ParseTheme(AppServices.Settings.ThemeMode));
+            // --theme=dark 只影响本次运行，用于截图与回归，不写回配置。
+            var themeOverride = e.Args
+                .FirstOrDefault(arg => arg.StartsWith("--theme=", StringComparison.OrdinalIgnoreCase))
+                ?["--theme=".Length..];
+
+            ThemeManager.Initialize(themeOverride is null
+                ? AppearanceOptions.ParseTheme(AppServices.Settings.ThemeMode)
+                : AppearanceOptions.ParseTheme(themeOverride));
             ThemeManager.Validate();
+
+            // 设置窗口的 Fluent 控件由 WPF-UI 着色，必须与 ThemeManager 同步。
+            // 启动调用要在任何窗口创建之前，运行期只换主题字典，避免动到候选浮窗。
+            FluentThemeBridge.ApplyStartup(ThemeManager.IsDark);
+            ThemeManager.ThemeChanged += OnThemeChanged;
+
             SystemTheme.Start();
 
             _registry = new FeatureRegistry();
@@ -84,11 +100,22 @@ public partial class App : Application
                 .FirstOrDefault(arg => arg.StartsWith("--page=", StringComparison.OrdinalIgnoreCase))
                 ?["--page=".Length..];
 
+            // 诊断入口：把设置窗口渲染成 PNG 后退出，便于在没有截图权限的环境里做界面回归。
+            _uiShotPath = e.Args
+                .FirstOrDefault(arg => arg.StartsWith("--ui-shot=", StringComparison.OrdinalIgnoreCase))
+                ?["--ui-shot=".Length..];
+
             if (!File.Exists(AppServices.Store.FilePath) ||
                 e.Args.Any(arg => arg.Equals("--settings", StringComparison.OrdinalIgnoreCase)) ||
-                _startupPage is not null)
+                _startupPage is not null ||
+                _uiShotPath is not null)
             {
                 ShowSettings();
+
+                if (_uiShotPath is not null)
+                {
+                    CaptureUi(_uiShotPath);
+                }
             }
         }
         catch (Exception ex)
@@ -130,6 +157,67 @@ public partial class App : Application
         }
 
         base.OnExit(e);
+    }
+
+    private static void OnThemeChanged(object? sender, EventArgs e) =>
+        FluentThemeBridge.ApplyRuntime(ThemeManager.IsDark);
+
+    /// <summary>
+    /// 把设置窗口按当前布局渲染成 PNG，然后退出。
+    /// </summary>
+    /// <param name="path">输出路径。</param>
+    /// <remarks>
+    /// 只是诊断入口（<c>--ui-shot=</c>），不参与正常启动。
+    /// 用 <see cref="RenderTargetBitmap"/> 是因为它不需要屏幕截图权限，
+    /// 在远程桌面、CI 或安全策略禁止截屏的环境里也能核对布局。
+    /// </remarks>
+    private void CaptureUi(string path)
+    {
+        Dispatcher.BeginInvoke(
+            new Action(async () =>
+            {
+                // 等模板应用、页面导航和第一次布局完成。
+                await Task.Delay(600);
+
+                if (_settingsWindow is null ||
+                    _settingsWindow.ActualWidth <= 0 ||
+                    _settingsWindow.ActualHeight <= 0)
+                {
+                    Log.Write("界面截图失败：设置窗口尚未完成布局");
+                    Shutdown();
+                    return;
+                }
+
+                try
+                {
+                    var width = (int)Math.Ceiling(_settingsWindow.ActualWidth);
+                    var height = (int)Math.Ceiling(_settingsWindow.ActualHeight);
+                    var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+                    bitmap.Render(_settingsWindow);
+
+                    var encoder = new PngBitmapEncoder();
+                    encoder.Frames.Add(BitmapFrame.Create(bitmap));
+
+                    var directory = Path.GetDirectoryName(path);
+                    if (!string.IsNullOrEmpty(directory))
+                    {
+                        Directory.CreateDirectory(directory);
+                    }
+
+                    using var stream = File.Create(path);
+                    encoder.Save(stream);
+                    Log.Write($"界面截图：{path}（{width}x{height}）");
+                }
+                catch (Exception ex)
+                {
+                    Log.Error("界面截图", ex);
+                }
+                finally
+                {
+                    Shutdown();
+                }
+            }),
+            DispatcherPriority.ApplicationIdle);
     }
 
     private async Task StartFeaturesAsync()

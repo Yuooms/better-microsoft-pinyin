@@ -114,7 +114,7 @@ internal static class Program
             ExtendedEnabled: true,
             ExtendedMaxCount: 3);
 
-        foreach (var query in new[] { "yisitalu", "ystl", "ruonawa", "lianxiang", "weiruan" })
+        foreach (var query in new[] { "yisitalu", "ystl", "rnw", "ruonawa", "lianxiang", "weiruan" })
         {
             try
             {
@@ -127,7 +127,8 @@ internal static class Program
 
                 var raw = await client.GetSuggestionsAsync(request, timeout.Token).ConfigureAwait(false);
                 var cleaned = ResultSanitizer.Sanitize(raw, request, SanitizeOptions.Extended);
-                var set = SuggestionSelector.Select(query, cleaned, null, matcher, options);
+                // 与控制器保持一致：分区用实际请求串，而不是用户的简拼原文。
+                var set = SuggestionSelector.Select(request, cleaned, null, matcher, options);
 
                 Console.WriteLine($"    {query,-10} 查询={request}  原始 {raw.Count,2} 条  来源={client.LastEndpointId ?? "-"}");
                 Console.WriteLine($"    {"",-10}   严格：{set.Strict?.Text ?? "(无)"}");

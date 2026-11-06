@@ -114,20 +114,29 @@
 
 ```
 src/BetterPinyin.App/Themes/
-  Colors.Light.xaml / Colors.Dark.xaml   键名完全一致的配色，索引 0 可整体替换
-  Metrics.xaml                           圆角/控件高/行高，启动时按系统版本调整
-  Controls.xaml                          七个控件模板 + SettingRow/Card
+  Colors.Light.xaml / Colors.Dark.xaml   候选浮窗与托盘的配色，索引 0 可整体替换
+  Metrics.xaml                           浮窗与旧控件的度量
+  Controls.xaml                          浮窗与旧页面的控件模板
 src/BetterPinyin.App/Shell/
-  ThemeManager.cs                        主题切换、资源解析、启动自检
+  ThemeManager.cs                        主题状态、浮窗配色切换、启动自检
   SystemTheme.cs                         读「应用模式」并监听系统变化
-  ShellChrome.cs                         窗口背景与标题栏的唯一入口
+  FluentThemeBridge.cs                   把同一份深浅色状态同步给 WPF-UI
+  SettingsWindow.xaml                    FluentWindow + TitleBar + NavigationView
+  SettingsPageProvider.cs                页面工厂与缓存（切页保留输入）
 ```
+
+设置窗口的外观由 **WPF-UI 4.3.0** 负责：`ui:FluentWindow` + `ui:TitleBar` +
+`ui:NavigationView`，`WindowBackdropType=None`。Windows 10 不支持 Mica / 亚克力，
+所以底色统一为 `ApplicationBackgroundBrush`，观感靠「自定义背景图」补。
 
 三条约束：
 
-1. **颜色一律 `DynamicResource`**。切主题是整字典替换，静态引用不会刷新；代码里赋过的画刷也不会。
+1. **浮窗的颜色一律 `DynamicResource`**。切主题是整字典替换，静态引用不会刷新；
+   设置窗口则用 WPF-UI 的 `ThemeResource` / `DynamicResource`，由主题字典驱动。
 2. **`Controls.xaml` 里不许出现跨字典的 `StaticResource`**，解析期找不到键会直接抛异常。
-3. **背景与标题栏只在 `ShellChrome` 里决定**。Win11 走 `DWMWA_SYSTEMBACKDROP_TYPE`（设置窗口 Mica、浮窗 Acrylic），Win10 默认纯色；失败时回滚合成状态并铺实色。
+3. **不要让 WPF-UI 接管候选浮窗**。浮窗是无焦点、点击穿透的透明窗口，
+   WPF-UI 的隐式 `Window` 样式会覆盖 `AllowsTransparency`；浮窗的材质仍走
+   `Backdrop.cs`（Win11 DWM / Win10 `SetWindowCompositionAttribute`）。
 
 ## 配置与数据
 

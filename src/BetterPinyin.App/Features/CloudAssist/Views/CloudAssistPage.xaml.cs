@@ -13,12 +13,16 @@ namespace BetterPinyin.App.Features.CloudAssist.Views;
 /// 这个页面只有十几个控件，显式赋值比搭一套绑定基础设施更易读、更少出错，
 /// 也让「点保存才生效」的语义一目了然。
 /// </remarks>
-public partial class CloudAssistPage : UserControl
+public partial class CloudAssistPage : Page
 {
     private const int MaxDiagnosticLines = 200;
 
     private readonly CloudAssistFeature _feature;
     private readonly List<string> _diagnosticLines = new();
+
+    // 页面由导航缓存，切走再切回会再次触发 Loaded。
+    // 只有第一次才把设置读进控件，否则会覆盖用户尚未保存的修改。
+    private bool _initialized;
 
     /// <summary>创建设置页。</summary>
     /// <param name="feature">所属功能模块。</param>
@@ -35,7 +39,14 @@ public partial class CloudAssistPage : UserControl
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        LoadFromSettings();
+        if (!_initialized)
+        {
+            _initialized = true;
+            LoadFromSettings();
+        }
+
+        // 先减后加：缓存页面反复 Loaded 时不会累积重复订阅。
+        _feature.Controller.Diagnostics -= OnDiagnostics;
         _feature.Controller.Diagnostics += OnDiagnostics;
     }
 

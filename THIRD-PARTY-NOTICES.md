@@ -1,8 +1,21 @@
 # 第三方声明
 
-本项目自身代码以仓库根目录的 LICENSE 为准。运行期不依赖任何第三方库（无 NuGet 包），
-仅内置词库在**构建期**使用了下列 MIT 许可的数据。生成的二进制文件包含这些数据的衍生形式，
+本项目自身代码以仓库根目录的 [LICENSE](LICENSE)（MIT）为准。
+
+运行期依赖 **WPF-UI 4.3.0**（MIT）及其传递依赖 **WPF-UI.Abstractions 4.3.0**，用于设置窗口的
+Fluent 控件、导航与标题栏。它们以二进制形式随程序分发。
+
+内置词库在**构建期**使用了下列 MIT 许可的数据；生成的二进制文件包含这些数据的衍生形式，
 因此在此保留原始版权声明。
+
+## WPF-UI
+
+- 项目：https://github.com/lepoco/wpfui
+- 包：`WPF-UI` 4.3.0、`WPF-UI.Abstractions` 4.3.0
+- 用途：`FluentWindow`、`TitleBar`、`NavigationView`、`CardControl`、`CardExpander`、
+  `ToggleSwitch`、`SymbolIcon` 与主题资源
+- 许可：MIT License，Copyright (C) 2021-2026 Leszek Pomianowski and WPF UI Contributors
+- 分发形式：随程序以二进制形式分发，保留 MIT 版权与许可声明
 
 ## pinyin-data
 
@@ -27,6 +40,15 @@
 - 项目：https://github.com/fxsjy/jieba
 - 用途：词表与词频
 - 许可：MIT License，Copyright (c) 2013 Sun Junyi
+
+## 界面思路参考（未引入代码）
+
+- 项目：BetterGI，https://github.com/babalae/better-genshin-impact
+- 许可：GPL-3.0
+- 说明：本项目设置窗口的信息架构（FluentWindow + TitleBar + NavigationView +
+  CardControl / CardExpander 的分组方式）参考了 BetterGI 的公开界面。
+  **仅参考交互与布局思路，未复制其源代码、XAML、样式或资源。**
+  本项目不包含 GPL-3.0 衍生代码，因此仍按 MIT 分发。
 
 ---
 

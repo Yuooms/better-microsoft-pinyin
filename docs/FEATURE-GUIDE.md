@@ -62,14 +62,18 @@ internal sealed class WordCountSettingsPage : ISettingsPage
 
     public string Id => "word-count.settings";
     public string Title => "输入统计";
-    public string Glyph => "\uE9D9";          // Segoe MDL2 / Fluent 图标字形
+    public string Glyph => "\uE9D9";          // Segoe MDL2 字形，外壳会映射到 Fluent 图标
     public string? Description => "统计口径与重置";
+
+    public Type ViewType => typeof(WordCountPage);
 
     public object CreateView() => new WordCountPage(_feature);
 }
 ```
 
-`CreateView()` 返回 `object` 是为了让 `Core` 不依赖 WPF：具体类型由 App 层提供，框架只负责"有哪些页、怎么创建"。
+`CreateView()` 返回 `object`、`ViewType` 只声明类型，都是为了让 `Core` 不依赖 WPF：
+具体类型由 App 层提供。`ViewType` 同时是导航键与页面缓存的键——
+`SettingsPageProvider` 保证同一页面只创建一次，切走再切回时输入不丢。
 
 ### 3. 注册
 
@@ -85,9 +89,10 @@ _registry.Register(new WordCountFeature(AppServices.Settings));
 
 参考 `src/BetterPinyin.App/Features/CloudAssist/Views/CloudAssistPage.xaml(.cs)`：
 
-- 页面继承 `UserControl`，在 `Loaded` 里从 `AppServices.Settings` 读值填入控件。
+- 页面继承 `Page`，根节点加 `ScrollViewer.CanContentScroll="False"`（阻止 WPF-UI 再套一层滚动容器）。
+- 页面实例会被缓存，`Loaded` 可能触发多次：只有第一次读设置，否则会覆盖用户未保存的修改。
 - 「保存」时写回设置对象 → `AppServices.SaveSettings()` → 调用模块自己的 `ApplySettings()`。
-- 需要实时日志时订阅模块事件，在 `Unloaded` 里退订（否则页面被回收后仍会收到回调）。
+- 需要实时日志时订阅模块事件，在 `Unloaded` 里退订；再 `Loaded` 时先减后加，避免重复订阅。
 
 ## 检查清单
 

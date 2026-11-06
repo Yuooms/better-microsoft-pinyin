@@ -13,7 +13,7 @@ namespace BetterPinyin.App.Shell;
 /// 这个页面存在的意义是收敛问题反馈：绝大多数"装了没反应"都能在这里一次性看出原因，
 /// 例如输入法不是微软拼音、开了双拼、UIA 不可用、或端点全部不通。
 /// </remarks>
-public partial class NetworkPage : UserControl
+public partial class NetworkPage : Page
 {
     // 颜色必须每次现取：切主题后旧画刷实例不会跟着变。
     private static Brush OkBrush => ThemeManager.ResolveBrush("SuccessBrush") ?? Brushes.Green;

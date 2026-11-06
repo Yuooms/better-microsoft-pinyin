@@ -219,11 +219,16 @@ dictionaries[0] = new ResourceDictionary { Source = new Uri("Themes/Colors.Dark.
 （940×660 约 62 万像素）。Win11 的 `DWMWA_SYSTEMBACKDROP_TYPE` 是合成器内部的预设路径，
 代价低得多；Win10 的 accent 是未公开实现，拖起来就是掉帧。
 
-更不划算的是：满窗模糊里真正可见的只有左侧导航条那 228px，内容区 97% 不透明把它盖住了。
+更不划算的是：满窗模糊里真正可见的只有左侧导航条那一窄条，内容区几乎把它盖住了。
 
-所以现在的策略是：Win11 自动用 Mica（系统「设置」自己的选择），Win10 默认纯色，
-只有用户在「外观」页显式选择才启用亚克力。`Backdrop.Apply` 在"不启用"时
-**完全不碰合成状态**，窗口保持普通不透明窗口，拖动走 DWM 的常规优化。
+因此设置窗口**已经放弃自研亚克力**，改用 WPF-UI 的 `FluentWindow`：
+Win10 上是普通不透明窗口（`WindowBackdropType=None`），拖动走 DWM 的常规优化；
+Win11 若要 Mica，把该属性改成 `Mica` 即可，不需要 `Backdrop.cs`。
+
+`Backdrop.cs` 仍保留给候选浮窗：它只覆盖一个小窗口、不需要拖动，
+`ACCENT_ENABLE_ACRYLICBLURBEHIND` 的逐帧代价可以接受；且浮窗是无焦点窗口，
+WPF-UI 接管不了。失败回滚逻辑（还原 `Window.Background`、`BackgroundColor` 与
+`-1` 的边框扩展）继续有效。
 
 失败回滚也必须完整：只还原 `Window.Background` 而留下透明的 `BackgroundColor`
 与 `-1` 的边框扩展，会得到"透明但没模糊"的窗口，直接透出桌面。

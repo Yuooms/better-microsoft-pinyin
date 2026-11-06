@@ -1,6 +1,7 @@
 <Application x:Class="BetterPinyin.App.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
              ShutdownMode="OnExplicitShutdown">
     <Application.Resources>
         <ResourceDictionary>
@@ -8,10 +9,24 @@
                 <!--
                     索引 0 必须是可替换的配色字典：ThemeManager 切换主题时整体替换这一项。
                     整项替换才会让所有 DynamicResource 重新求值，所以顺序不能变。
+                    这套键只服务候选浮窗与托盘等自绘界面；设置窗口用 WPF-UI 的 Fluent 调色板。
                 -->
                 <ResourceDictionary Source="Themes/Colors.Light.xaml" />
                 <ResourceDictionary Source="Themes/Metrics.xaml" />
+
+                <!--
+                    过渡期保留：尚未迁移到 WPF-UI 的页面仍引用 Card / SettingRow / PageTitle 等显式样式。
+                    全部页面迁完后，这一项会从应用级移除，只在候选浮窗里局部合并。
+                -->
                 <ResourceDictionary Source="Themes/Controls.xaml" />
+
+                <!--
+                    WPF-UI 必须放在应用级：
+                    FontIcon 构造时直接读 Application.Resources["DefaultIconFontSize"]，
+                    放到窗口级会导致图标字号取不到。ControlsDictionary 还会全局初始化 TextBlock 元数据。
+                -->
+                <ui:ThemesDictionary Theme="Light" />
+                <ui:ControlsDictionary />
             </ResourceDictionary.MergedDictionaries>
         </ResourceDictionary>
     </Application.Resources>

@@ -55,26 +55,6 @@ internal static class AppearanceOptions
         _ => "System",
     };
 
-    /// <summary>解析背景策略。</summary>
-    /// <param name="value">配置值。</param>
-    /// <returns>无法识别时按「自动」处理。</returns>
-    public static BackdropMode ParseBackdrop(string? value) => value?.Trim().ToLowerInvariant() switch
-    {
-        "solid" => BackdropMode.Solid,
-        "acrylic" => BackdropMode.Acrylic,
-        _ => BackdropMode.Auto,
-    };
-
-    /// <summary>把背景策略写回配置值。</summary>
-    /// <param name="mode">策略。</param>
-    /// <returns>配置字符串。</returns>
-    public static string ToSettingValue(BackdropMode mode) => mode switch
-    {
-        BackdropMode.Solid => "Solid",
-        BackdropMode.Acrylic => "Acrylic",
-        _ => "Auto",
-    };
-
     /// <summary>当前是否应该启用玻璃效果。</summary>
     /// <param name="mode">背景策略。</param>
     /// <returns>是否启用。</returns>

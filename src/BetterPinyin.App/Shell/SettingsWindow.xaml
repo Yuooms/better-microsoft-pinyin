@@ -1,99 +1,62 @@
-<Window x:Class="BetterPinyin.App.Shell.SettingsWindow"
-        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Better 微软拼音 · 设置"
-        Width="1000" Height="700"
-        MinWidth="880" MinHeight="600"
-        WindowStartupLocation="CenterScreen"
-        Background="Transparent"
-        FontFamily="Microsoft YaHei UI, Segoe UI">
+<ui:FluentWindow x:Class="BetterPinyin.App.Shell.SettingsWindow"
+                 xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                 xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                 xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+                 Title="Better 微软拼音"
+                 Width="1080"
+                 Height="720"
+                 MinWidth="900"
+                 MinHeight="600"
+                 WindowStartupLocation="CenterScreen"
+                 ExtendsContentIntoTitleBar="True"
+                 WindowBackdropType="None"
+                 WindowCornerPreference="Round"
+                 Background="{DynamicResource ApplicationBackgroundBrush}"
+                 FontFamily="Microsoft YaHei UI, Segoe UI">
 
     <!--
-        标题栏保持系统原生：自绘标题栏会引入窗口阴影、最大化贴边、无障碍等一堆问题，
-        收益远小于成本。材质只负责客户区。
+        标题栏与导航都由 WPF-UI 绘制：
+        - FluentWindow 内部设置 WindowChrome（CaptionHeight=0、ResizeBorderThickness=4），
+          TitleBar 自己处理 WM_NCHITTEST，不要再叠加 DwmExtendFrameIntoClientArea。
+        - WindowBackdropType 固定 None：Windows 10 上非 None 会走无效的 MICA_EFFECT，
+          还会和背景图抢画刷；材质由 Shell/Backdrop.cs 只负责候选浮窗。
     -->
     <Grid>
-        <Border x:Name="WindowRoot" Background="{DynamicResource WindowBackgroundBrush}" />
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
 
-        <Grid>
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="248" />
-                <ColumnDefinition Width="*" />
-            </Grid.ColumnDefinitions>
+        <!-- 背景图：在窗口底色之上、标题栏与内容之下；不参与命中测试。 -->
+        <Image x:Name="BackgroundImage"
+               Grid.RowSpan="2"
+               Stretch="UniformToFill"
+               IsHitTestVisible="False"
+               RenderOptions.BitmapScalingMode="HighQuality"
+               Visibility="Collapsed" />
 
-            <!-- 导航层：半透明，透出系统材质；内容区接近不透明，保证长文本可读 -->
-            <Border Grid.Column="0"
-                    Background="{DynamicResource ShellGlassBrush}"
-                    BorderBrush="{DynamicResource BorderBrush}"
-                    BorderThickness="0,0,1,0">
-                <DockPanel>
-                    <StackPanel DockPanel.Dock="Top" Margin="22,20,22,14">
-                        <TextBlock Text="Better 微软拼音" FontSize="15" FontWeight="SemiBold" />
-                        <TextBlock x:Name="VersionText" Style="{StaticResource Hint}" Margin="0,2,0,0" />
-                    </StackPanel>
+        <ui:TitleBar Grid.Row="0"
+                     Height="48"
+                     Title="Better 微软拼音" />
 
-                    <ListBox x:Name="NavList"
-                             DockPanel.Dock="Top"
-                             Background="Transparent"
-                             BorderThickness="0"
-                             SelectionChanged="OnNavSelectionChanged"
-                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <StackPanel Orientation="Horizontal">
-                                    <TextBlock Text="{Binding Glyph}"
-                                               FontFamily="Segoe MDL2 Assets"
-                                               FontSize="15"
-                                               Margin="0,0,12,0"
-                                               VerticalAlignment="Center" />
-                                    <TextBlock Text="{Binding Title}" FontSize="14" VerticalAlignment="Center" />
-                                </StackPanel>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                        <ListBox.ItemContainerStyle>
-                            <Style TargetType="ListBoxItem">
-                                <Setter Property="Height" Value="40" />
-                                <Setter Property="Margin" Value="8,1" />
-                                <Setter Property="Padding" Value="14,0" />
-                                <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}" />
-                                <Setter Property="FocusVisualStyle" Value="{x:Null}" />
-                                <Setter Property="Template">
-                                    <Setter.Value>
-                                        <ControlTemplate TargetType="ListBoxItem">
-                                            <Grid Background="Transparent">
-                                                <Border x:Name="Hover"
-                                                        Background="{DynamicResource TextPrimaryBrush}"
-                                                        Opacity="0"
-                                                        CornerRadius="{DynamicResource ControlCornerRadius}" />
-                                                <Border x:Name="Bar" Width="3" Margin="0,8"
-                                                        HorizontalAlignment="Left"
-                                                        Background="{DynamicResource AccentBrush}"
-                                                        CornerRadius="2" Opacity="0" />
-                                                <ContentPresenter Margin="{TemplateBinding Padding}"
-                                                                  VerticalAlignment="Center" />
-                                            </Grid>
-                                            <ControlTemplate.Triggers>
-                                                <Trigger Property="IsMouseOver" Value="True">
-                                                    <Setter TargetName="Hover" Property="Opacity" Value="0.04" />
-                                                </Trigger>
-                                                <Trigger Property="IsSelected" Value="True">
-                                                    <Setter TargetName="Hover" Property="Opacity" Value="0.06" />
-                                                    <Setter TargetName="Bar" Property="Opacity" Value="1" />
-                                                </Trigger>
-                                            </ControlTemplate.Triggers>
-                                        </ControlTemplate>
-                                    </Setter.Value>
-                                </Setter>
-                            </Style>
-                        </ListBox.ItemContainerStyle>
-                    </ListBox>
-                </DockPanel>
-            </Border>
-
-            <!-- 内容层：不放 ScrollViewer，滚动权交给各页面，避免两层嵌套导致滚轮被内层吃掉 -->
-            <Border Grid.Column="1" Background="{DynamicResource ContentGlassBrush}">
-                <ContentControl x:Name="ContentHost" />
-            </Border>
-        </Grid>
+        <ui:NavigationView x:Name="RootNavigation"
+                           Grid.Row="1"
+                           Background="{DynamicResource ApplicationBackgroundBrush}"
+                           OpenPaneLength="160"
+                           IsBackButtonVisible="Collapsed"
+                           IsPaneToggleVisible="True"
+                           IsTopSeparatorVisible="False">
+            <ui:NavigationView.PaneHeader>
+                <StackPanel Margin="16,10,16,6">
+                    <ui:TextBlock Text="Better 微软拼音"
+                                  FontTypography="Caption"
+                                  Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                  TextTrimming="CharacterEllipsis" />
+                    <ui:TextBlock x:Name="VersionText"
+                                  FontTypography="Caption"
+                                  Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                </StackPanel>
+            </ui:NavigationView.PaneHeader>
+        </ui:NavigationView>
     </Grid>
-</Window>
+</ui:FluentWindow>

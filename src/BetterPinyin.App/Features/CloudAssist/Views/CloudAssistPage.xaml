@@ -1,8 +1,9 @@
-<UserControl x:Class="BetterPinyin.App.Features.CloudAssist.Views.CloudAssistPage"
-             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:ui="clr-namespace:BetterPinyin.App.Shell.Controls"
-             FontFamily="Microsoft YaHei UI, Segoe UI">
+<Page ScrollViewer.CanContentScroll="False" x:Class="BetterPinyin.App.Features.CloudAssist.Views.CloudAssistPage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="clr-namespace:BetterPinyin.App.Shell.Controls"
+      xmlns:fl="http://schemas.lepo.co/wpfui/2022/xaml"
+      FontFamily="Microsoft YaHei UI, Segoe UI">
 
     <DockPanel>
         <!-- 保存条固定在底部：页面再长也不用滚到底才能保存 -->
@@ -10,23 +11,32 @@
                 Background="{DynamicResource SurfaceBrush}"
                 BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="0,1,0,0"
-                Padding="24,12">
+                Padding="42,12">
             <StackPanel Orientation="Horizontal">
-                <Button x:Name="SaveButton" Content="保存并应用" Width="120"
-                        Style="{StaticResource AccentButtonStyle}" Click="OnSaveClick" />
-                <TextBlock x:Name="SaveStatusText" VerticalAlignment="Center" Margin="12,0,0,0"
-                           Foreground="{DynamicResource TextSecondaryBrush}" TextWrapping="Wrap" />
+                <fl:Button x:Name="SaveButton"
+                           Content="保存并应用"
+                           Appearance="Primary"
+                           MinWidth="120"
+                           Click="OnSaveClick" />
+                <TextBlock x:Name="SaveStatusText"
+                           VerticalAlignment="Center"
+                           Margin="12,0,0,0"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           TextWrapping="Wrap" />
             </StackPanel>
         </Border>
 
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-            <StackPanel MaxWidth="{DynamicResource PageMaxWidth}"
-                        Margin="{DynamicResource PagePadding}"
+            <StackPanel MaxWidth="820"
+                        Margin="42,20,42,28"
                         HorizontalAlignment="Left">
 
-                <TextBlock Text="云联想" Style="{StaticResource PageTitle}" />
-                <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,4"
-                           Text="输入拼音时从 Bing 取联想词。云联想严格按字数匹配，扩展云联想补充更长的词，两者可独立开关。" />
+                <fl:TextBlock Text="云联想" FontTypography="Title" />
+                <fl:TextBlock FontTypography="Caption"
+                              Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                              TextWrapping="Wrap"
+                              Margin="0,4,0,0"
+                              Text="输入拼音时从 Bing 取联想词。云联想严格按字数匹配，扩展云联想补充更长的词，两者可独立开关。" />
 
                 <!-- 总开关单独一张卡，对应系统设置里的「主开关」 -->
                 <Border Style="{StaticResource Card}" Margin="0,16,0,0">
@@ -34,17 +44,19 @@
                                             Header="启用云联想"
                                             ui:SettingRow.Description="关闭后不查询云端，但仍保留托盘图标与设置界面。"
                                             ui:SettingRow.ShowDivider="False">
-                        <CheckBox x:Name="EnabledCheckBox" Content="启用云联想" />
+                        <fl:ToggleSwitch x:Name="EnabledCheckBox"
+                                         AutomationProperties.Name="启用云联想" />
                     </HeaderedContentControl>
                 </Border>
 
-                <TextBlock Text="云联想" Style="{StaticResource SectionTitle}" />
+                <fl:TextBlock Text="云联想" FontTypography="BodyStrong" Margin="0,20,0,8" />
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="启用云联想"
                                                 ui:SettingRow.Description="候选必须与输入的字数完全相等。例如 lianxiang 只会给出「联想」，不会给出「联想电脑管家」。">
-                            <CheckBox x:Name="StrictCheckBox" Content="启用云联想" />
+                            <fl:ToggleSwitch x:Name="StrictCheckBox"
+                                             AutomationProperties.Name="启用云联想" />
                         </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
@@ -64,18 +76,20 @@
                                                 Header="候选已在本地候选里时不显示"
                                                 ui:SettingRow.Description="本地已经能选到的词不再重复展示，避免云联想没有带来新信息。"
                                                 ui:SettingRow.ShowDivider="False">
-                            <CheckBox x:Name="StrictDedupeCheckBox" Content="候选已在本地候选里时不显示" />
+                            <fl:ToggleSwitch x:Name="StrictDedupeCheckBox"
+                                             AutomationProperties.Name="候选已在本地候选里时不显示" />
                         </HeaderedContentControl>
                     </StackPanel>
                 </Border>
 
-                <TextBlock Text="扩展云联想" Style="{StaticResource SectionTitle}" />
+                <fl:TextBlock Text="扩展云联想" FontTypography="BodyStrong" Margin="0,20,0,8" />
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="启用扩展云联想"
                                                 ui:SettingRow.Description="补充以当前拼音开头的更长词。例如 ruonawa 会补充「若娜瓦壁纸」「若娜瓦英文」。">
-                            <CheckBox x:Name="ExtendedCheckBox" Content="启用扩展云联想" />
+                            <fl:ToggleSwitch x:Name="ExtendedCheckBox"
+                                             AutomationProperties.Name="启用扩展云联想" />
                         </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
@@ -107,7 +121,7 @@
                     </StackPanel>
                 </Border>
 
-                <TextBlock Text="展示" Style="{StaticResource SectionTitle}" />
+                <fl:TextBlock Text="展示" FontTypography="BodyStrong" Margin="0,20,0,8" />
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
@@ -129,18 +143,20 @@
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="浮窗显示云图标"
                                                 ui:SettingRow.ShowDivider="False">
-                            <CheckBox x:Name="ShowCloudIconCheckBox" Content="浮窗显示云图标" />
+                            <fl:ToggleSwitch x:Name="ShowCloudIconCheckBox"
+                                             AutomationProperties.Name="浮窗显示云图标" />
                         </HeaderedContentControl>
                     </StackPanel>
                 </Border>
 
-                <TextBlock Text="触发" Style="{StaticResource SectionTitle}" />
+                <fl:TextBlock Text="触发" FontTypography="BodyStrong" Margin="0,20,0,8" />
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="英文状态下也联想"
                                                 ui:SettingRow.Description="默认关闭。开启后，在微软拼音的英文状态打拼音也会出候选；采纳时会先删掉已输入的字母，删除前会校验文本确实是刚输入的内容，校验不通过则放弃。">
-                            <CheckBox x:Name="EnglishCheckBox" Content="英文状态下也联想" />
+                            <fl:ToggleSwitch x:Name="EnglishCheckBox"
+                                             AutomationProperties.Name="英文状态下也联想" />
                         </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
@@ -170,25 +186,27 @@
                     </StackPanel>
                 </Border>
 
-                <TextBlock Text="输入方式" Style="{StaticResource SectionTitle}" />
+                <fl:TextBlock Text="输入方式" FontTypography="BodyStrong" Margin="0,20,0,8" />
                 <Border Style="{StaticResource Card}">
                     <StackPanel>
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="按模糊音校验读音"
                                                 ui:SettingRow.Description="z/zh、n/l、前后鼻音等按同一类处理，与微软拼音的模糊音设置保持一致。">
-                            <CheckBox x:Name="FuzzyCheckBox" Content="按模糊音校验读音" />
+                            <fl:ToggleSwitch x:Name="FuzzyCheckBox"
+                                             AutomationProperties.Name="按模糊音校验读音" />
                         </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="使用双拼"
                                                 ui:SettingRow.Description="开启后按键串不是全拼，云联想会自动停用。"
                                                 ui:SettingRow.ShowDivider="False">
-                            <CheckBox x:Name="DoublePinyinCheckBox" Content="使用双拼" />
+                            <fl:ToggleSwitch x:Name="DoublePinyinCheckBox"
+                                             AutomationProperties.Name="使用双拼" />
                         </HeaderedContentControl>
                     </StackPanel>
                 </Border>
 
-                <TextBlock Text="不联想的程序" Style="{StaticResource SectionTitle}" />
+                <fl:TextBlock Text="不联想的程序" FontTypography="BodyStrong" Margin="0,20,0,8" />
                 <Border Style="{StaticResource Card}">
                     <HeaderedContentControl Style="{StaticResource SettingRow}"
                                             Header="进程名"
@@ -201,7 +219,7 @@
                     </HeaderedContentControl>
                 </Border>
 
-                <TextBlock Text="运行诊断" Style="{StaticResource SectionTitle}" />
+                <fl:TextBlock Text="运行诊断" FontTypography="BodyStrong" Margin="0,20,0,8" />
                 <Border Style="{StaticResource Card}" Padding="12">
                     <TextBox x:Name="DiagnosticsTextBox" Height="170" IsReadOnly="True"
                              FontFamily="Consolas" FontSize="12"
@@ -213,4 +231,4 @@
             </StackPanel>
         </ScrollViewer>
     </DockPanel>
-</UserControl>
+</Page>

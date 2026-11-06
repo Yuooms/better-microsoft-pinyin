@@ -185,11 +185,9 @@ internal static class ThemeManager
         }
 
         metrics["ControlCornerRadius"] = new CornerRadius(2);
-        metrics["CardCornerRadius"] = new CornerRadius(2);
         metrics["FlyoutCornerRadius"] = new CornerRadius(4);
         metrics["ControlHeight"] = 30d;
         metrics["RowMinHeight"] = 48d;
-        metrics["PagePadding"] = new Thickness(28, 20, 28, 28);
         metrics["ScrollBarThickness"] = 14d;
     }
 

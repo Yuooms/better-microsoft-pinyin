@@ -9,7 +9,10 @@
 | IDE | Visual Studio 2022（可选，命令行即可开发） |
 | 运行时 | Windows Desktop Runtime 8 |
 
-本项目**零第三方 NuGet 依赖**：UIA、SendInput、钩子都是手写 P/Invoke 与 COM 互操作，测试用自带的断言器而不是测试框架。这样在受限网络下也能直接构建。
+唯一的运行期 NuGet 依赖是 **WPF-UI 4.3.0**（MIT，设置窗口的 Fluent 控件与导航），
+其余全部自研：UIA、SendInput、钩子都是手写 P/Invoke 与 COM 互操作，
+测试用自带的断言器而不是测试框架。依赖缺失时 `dotnet restore` 会从
+`NuGet.config` 配置的镜像或官方源拉取。
 
 ## 构建与运行
 

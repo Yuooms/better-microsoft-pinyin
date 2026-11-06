@@ -1,19 +1,23 @@
-<UserControl x:Class="BetterPinyin.App.Shell.AppearancePage"
-             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:ui="clr-namespace:BetterPinyin.App.Shell.Controls"
-             FontFamily="Microsoft YaHei UI, Segoe UI">
+<Page ScrollViewer.CanContentScroll="False" x:Class="BetterPinyin.App.Shell.AppearancePage"
+      xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+      xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+      xmlns:ui="clr-namespace:BetterPinyin.App.Shell.Controls"
+      xmlns:fl="http://schemas.lepo.co/wpfui/2022/xaml"
+      FontFamily="Microsoft YaHei UI, Segoe UI">
 
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-        <StackPanel MaxWidth="{DynamicResource PageMaxWidth}"
-                    Margin="{DynamicResource PagePadding}"
+        <StackPanel MaxWidth="820"
+                    Margin="42,20,42,28"
                     HorizontalAlignment="Left">
 
-            <TextBlock Text="外观" Style="{StaticResource PageTitle}" />
-            <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,4"
-                       Text="选择配色与窗口背景。改动立即生效，不需要保存。" />
+            <fl:TextBlock Text="外观" FontTypography="Title" />
+            <fl:TextBlock FontTypography="Caption"
+                          Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                          Margin="0,4,0,0"
+                          TextWrapping="Wrap"
+                          Text="选择配色与窗口背景。改动立即生效，不需要保存。" />
 
-            <TextBlock Text="主题" Style="{StaticResource SectionTitle}" />
+            <fl:TextBlock Text="主题" FontTypography="BodyStrong" Margin="0,20,0,8" />
             <Border Style="{StaticResource Card}">
                 <StackPanel>
                     <HeaderedContentControl Style="{StaticResource SettingRow}"
@@ -29,42 +33,88 @@
                 </StackPanel>
             </Border>
 
-            <TextBlock Text="窗口" Style="{StaticResource SectionTitle}" />
+            <fl:TextBlock Text="窗口背景" FontTypography="BodyStrong" Margin="0,20,0,8" />
             <Border Style="{StaticResource Card}">
                 <StackPanel>
                     <HeaderedContentControl Style="{StaticResource SettingRow}"
-                                            Header="窗口背景"
-                                            ui:SettingRow.Description="自动：Windows 11 使用系统材质，Windows 10 使用纯色。亚克力在 Windows 10 上会让拖动窗口掉帧。"
+                                            Header="使用自定义背景图"
+                                            ui:SettingRow.Description="选一张图铺满窗口。透明度越低，文字越清晰。">
+                        <fl:ToggleSwitch x:Name="BackgroundToggle"
+                                         AutomationProperties.Name="使用自定义背景图"
+                                         Checked="OnBackgroundToggleChanged"
+                                         Unchecked="OnBackgroundToggleChanged" />
+                    </HeaderedContentControl>
+
+                    <HeaderedContentControl Style="{StaticResource SettingRow}"
+                                            Header="图片"
+                                            ui:SettingRow.Description="支持 png / jpg / bmp / webp。">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBox x:Name="BackgroundPathTextBox"
+                                     Width="260"
+                                     IsReadOnly="True"
+                                     VerticalContentAlignment="Center" />
+                            <Button x:Name="BrowseButton"
+                                    Content="选择…"
+                                    Width="80"
+                                    Margin="8,0,0,0"
+                                    Click="OnBrowseClick" />
+                            <Button x:Name="ClearButton"
+                                    Content="清除"
+                                    Width="64"
+                                    Margin="8,0,0,0"
+                                    Click="OnClearClick" />
+                        </StackPanel>
+                    </HeaderedContentControl>
+
+                    <HeaderedContentControl Style="{StaticResource SettingRow}"
+                                            Header="透明度"
+                                            ui:SettingRow.Description="拖动时实时预览，松手后保存。">
+                        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                            <Slider x:Name="OpacitySlider"
+                                    Width="220"
+                                    Minimum="0.1"
+                                    Maximum="1"
+                                    TickFrequency="0.05"
+                                    IsSnapToTickEnabled="True"
+                                    ValueChanged="OnOpacityChanged"
+                                    LostMouseCapture="OnOpacityCaptureLost" />
+                            <TextBlock x:Name="OpacityValueText"
+                                       Width="48"
+                                       Margin="12,0,0,0"
+                                       VerticalAlignment="Center"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                    </HeaderedContentControl>
+
+                    <HeaderedContentControl Style="{StaticResource SettingRow}"
+                                            Header="预览"
                                             ui:SettingRow.ShowDivider="False">
-                        <ComboBox x:Name="BackdropComboBox" Width="200" SelectionChanged="OnBackdropSelectionChanged">
-                            <ComboBoxItem Content="自动" Tag="Auto" />
-                            <ComboBoxItem Content="纯色" Tag="Solid" />
-                            <ComboBoxItem Content="亚克力" Tag="Acrylic" />
-                        </ComboBox>
+                        <Border Width="260"
+                                Height="120"
+                                CornerRadius="8"
+                                ClipToBounds="True"
+                                Background="{DynamicResource SurfaceAltBrush}"
+                                BorderBrush="{DynamicResource BorderBrush}"
+                                BorderThickness="1">
+                            <Grid>
+                                <Image x:Name="PreviewImage" Stretch="UniformToFill" />
+                                <TextBlock x:Name="PreviewHint"
+                                           Text="未选择图片"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextFillColorTertiaryBrush}" />
+                            </Grid>
+                        </Border>
                     </HeaderedContentControl>
                 </StackPanel>
             </Border>
 
-            <TextBlock Text="预览" Style="{StaticResource SectionTitle}" />
-            <Border Style="{StaticResource Card}">
-                <StackPanel>
-                    <HeaderedContentControl Style="{StaticResource SettingRow}"
-                                            Header="开关与按钮的外观"
-                                            ui:SettingRow.Description="这一行就是设置页里每一项的实际样式。">
-                        <CheckBox IsChecked="True" IsHitTestVisible="False" Focusable="False" />
-                    </HeaderedContentControl>
-                    <HeaderedContentControl Style="{StaticResource SettingRow}"
-                                            Header="次要按钮"
-                                            ui:SettingRow.Description="用于「重新检测」这类不改变设置的操作。"
-                                            ui:SettingRow.ShowDivider="False">
-                        <Button Content="示例" IsHitTestVisible="False" Focusable="False" />
-                    </HeaderedContentControl>
-                </StackPanel>
-            </Border>
-
-            <TextBlock Style="{StaticResource Hint}" Margin="0,16,0,0"
-                       Text="说明：标题栏、滚动条与托盘右键菜单由 Windows 绘制；其余控件按当前系统版本的尺寸与配色绘制。" />
+            <fl:TextBlock FontTypography="Caption"
+                          Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                          Margin="0,16,0,0"
+                          TextWrapping="Wrap"
+                          Text="说明：设置窗口使用 WPF-UI 的 Fluent 控件。Windows 10 不支持 Mica / 亚克力，窗口底色统一为纯色；背景图是提升观感的主要方式。" />
 
         </StackPanel>
     </ScrollViewer>
-</UserControl>
+</Page>

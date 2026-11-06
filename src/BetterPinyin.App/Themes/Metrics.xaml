@@ -10,7 +10,7 @@
 
     <!-- 圆角：Win11 4px / Win10 2px -->
     <CornerRadius x:Key="ControlCornerRadius">4</CornerRadius>
-    <CornerRadius x:Key="CardCornerRadius">4</CornerRadius>
+    <CornerRadius x:Key="CardCornerRadius">8</CornerRadius>
     <CornerRadius x:Key="FlyoutCornerRadius">8</CornerRadius>
 
     <!-- 输入控件高度：Win11 32 / Win10 30 -->
@@ -20,8 +20,8 @@
     <sys:Double x:Key="RowMinHeight">52</sys:Double>
 
     <!-- 页面内容宽度与内边距 -->
-    <sys:Double x:Key="PageMaxWidth">680</sys:Double>
-    <Thickness x:Key="PagePadding">32,24,32,32</Thickness>
+    <sys:Double x:Key="PageMaxWidth">820</sys:Double>
+    <Thickness x:Key="PagePadding">42,20,42,28</Thickness>
 
     <!-- 滚动条宽度：Win10 的滚动条更宽一点 -->
     <sys:Double x:Key="ScrollBarThickness">12</sys:Double>

@@ -28,5 +28,8 @@ internal sealed class CloudAssistSettingsPage : ISettingsPage
     public string? Description => "配置云候选的触发、展示与采纳方式";
 
     /// <inheritdoc />
+    public Type ViewType => typeof(CloudAssistPage);
+
+    /// <inheritdoc />
     public object CreateView() => new CloudAssistPage(_feature);
 }

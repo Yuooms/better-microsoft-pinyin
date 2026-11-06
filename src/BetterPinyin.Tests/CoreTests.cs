@@ -32,6 +32,7 @@ internal sealed class FakeLexicon : IPinyinLexicon
             ['壁'] = "bi", ['纸'] = "zhi", ['英'] = "ying", ['文'] = "wen",
             ['联'] = "lian", ['想'] = "xiang", ['电'] = "dian", ['脑'] = "nao",
             ['管'] = "guan", ['家'] = "jia", ['那'] = "na", ['谁'] = "shui", ['路'] = "lu", ['是'] = "shi",
+            ['日'] = "ri", ['内'] = "nei", ['公'] = "gong", ['约'] = "yue",
         };
 
         var table = SyllableTable.Default;
@@ -155,6 +156,14 @@ internal static class CoreTests
         Check.Equal(0, ResultSanitizer.Sanitize(longText, "x").Count, "默认上限应丢弃 10 字候选");
         Check.Equal(1, ResultSanitizer.Sanitize(longText, "x", SanitizeOptions.Extended).Count,
             "扩展模式应保留 10 字候选");
+
+        // 简拼展开后，回显的是展开串（rineiwa），不是用户输入的 rnw。
+        var expandedEcho = ResultSanitizer.Sanitize(
+            new[] { "rineiwa", "日内瓦公约" },
+            "rineiwa",
+            SanitizeOptions.Extended);
+        Check.Equal(1, expandedEcho.Count, "展开串的回显应被剔除");
+        Check.Equal("日内瓦公约", expandedEcho[0], "回显剔除后应保留中文候选");
     }
 
     private static void Matcher()
@@ -272,6 +281,30 @@ internal static class CoreTests
             options with { StrictEnabled = false, ExtendedEnabled = false });
         Check.True(none.IsEmpty, "两个槽都关闭时应为空");
         Check.True(none.Diagnostic.Contains("关闭", StringComparison.Ordinal), "诊断应说明已关闭");
+
+        // 简拼回归：rnw 经词库展开成 rineiwa 后，必须按展开串校验才能匹配「日内瓦公约」。
+        var genevaMatch = matcher.Match("rineiwa", "日内瓦公约");
+        Check.Equal(PinyinMatchKind.Extended, genevaMatch.Kind, "展开串应命中扩展档");
+        Check.Equal(2, genevaMatch.ExtraSyllables, "日内瓦公约比 rineiwa 多两个音节");
+
+        var expanded = SuggestionSelector.Select(
+            "rineiwa",
+            new[] { "日内瓦", "日内瓦公约", "日内瓦会议" },
+            localCandidates: new[] { "日内瓦" },
+            matcher,
+            options);
+        Check.True(expanded.Strict is null, "本地已有「日内瓦」时严格槽应为空");
+        Check.Contains(expanded.Extended.Select(e => e.Text), "日内瓦公约", "展开串应能进扩展槽");
+        Check.Equal("日内瓦公约", expanded.Extended[0].Text, "扩展槽应保持 Bing 原序");
+
+        // 反过来用 raw 校验必然为空，这是修复前的行为，留作护栏防止改回去。
+        var rawAbbreviation = SuggestionSelector.Select(
+            "rnw",
+            new[] { "日内瓦公约" },
+            localCandidates: Array.Empty<string>(),
+            matcher,
+            options);
+        Check.True(rawAbbreviation.IsEmpty, "3 字母简拼不应直接匹配 5 音节词");
     }
 
     private static void Ranker()

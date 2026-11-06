@@ -21,7 +21,12 @@ public interface ISettingsPage
     /// <summary>页面副标题，可为空。</summary>
     string? Description { get; }
 
-    /// <summary>创建视图对象（App 层按 UserControl 使用）。</summary>
+    /// <summary>
+    /// 视图类型，用作导航与页面缓存的键。App 层保证它实现 <see cref="CreateView"/> 返回的类型。
+    /// </summary>
+    Type ViewType { get; }
+
+    /// <summary>创建视图对象（App 层按 Page 使用）。</summary>
     /// <returns>视图实例。</returns>
     object CreateView();
 }

@@ -327,33 +327,6 @@ internal sealed class CloudAssistController : IDisposable
             }
 
             var requests = BuildQueries(raw);
-            var rawItems = new List<string>(16);
-
-            foreach (var request in requests)
-            {
-                var items = await _client.GetSuggestionsAsync(request, cancellationToken).ConfigureAwait(false);
-                rawItems.AddRange(items);
-
-                if (cancellationToken.IsCancellationRequested || version != _tracker.Version)
-                {
-                    return;
-                }
-
-                // 简拼展开可能有多个全拼串，第一个有结果就不再往下查，控制延迟。
-                if (items.Count > 0)
-                {
-                    break;
-                }
-            }
-
-            var cleaned = ResultSanitizer.Sanitize(rawItems, raw, SanitizeOptions.Extended);
-            if (cleaned.Count == 0)
-            {
-                Report($"{raw}：云端无可用候选（原始 {rawItems.Count} 条均被过滤）");
-                Clear();
-                return;
-            }
-
             var local = snapshot.Items.Select(i => i.Text).ToList();
             var options = new SuggestionSelectionOptions(
                 StrictEnabled: _settings.StrictEnabled,
@@ -361,48 +334,83 @@ internal sealed class CloudAssistController : IDisposable
                 ExtendedEnabled: _settings.ExtendedEnabled,
                 ExtendedMaxCount: Math.Clamp(_settings.ExtendedMaxCount, 1, 4));
 
-            var set = SuggestionSelector.Select(
-                raw,
-                cleaned,
-                local,
-                _matcher,
-                options,
-                snapshot.Items.Count,
-                snapshot.Quality == CandidateReadQuality.Exact,
-                _client.LastEndpointId ?? "bing");
+            SuggestionSet? lastSet = null;
+            var rawCount = 0;
 
-            var extendedKeys = ResolveExtendedKeys(set, snapshot);
-            var strictKey = KeyNames.Resolve(_settings.StrictAcceptKey);
-            var (map, slots) = ActivationMap.Build(set, strictKey, extendedKeys);
-
-            if (slots.Count == 0)
+            foreach (var request in requests)
             {
-                Report($"{raw}：{set.Diagnostic}");
-                Clear();
+                var items = await _client.GetSuggestionsAsync(request, cancellationToken).ConfigureAwait(false);
+                rawCount += items.Count;
+
+                if (cancellationToken.IsCancellationRequested || version != _tracker.Version)
+                {
+                    return;
+                }
+
+                // 回显比对要用本次实际请求的串：简拼展开后请求的是全拼（rineiwa），不是 raw（rnw）。
+                var cleaned = ResultSanitizer.Sanitize(items, request, SanitizeOptions.Extended);
+                if (cleaned.Count == 0)
+                {
+                    continue;
+                }
+
+                // 分区同样必须用实际请求串。拿 raw 校验时，rnw（3 个字母）永远匹配不上
+                // 「日内瓦公约」（5 个音节），整个批次会被判成 None 丢掉。
+                var attempt = SuggestionSelector.Select(
+                    request,
+                    cleaned,
+                    local,
+                    _matcher,
+                    options,
+                    snapshot.Items.Count,
+                    snapshot.Quality == CandidateReadQuality.Exact,
+                    _client.LastEndpointId ?? "bing");
+
+                lastSet = attempt;
+
+                // 这条展开串分不出槽位就继续试下一条，别让词库里的劣质展开挡住正确结果。
+                if (attempt.IsEmpty)
+                {
+                    continue;
+                }
+
+                var extendedKeys = ResolveExtendedKeys(attempt, snapshot);
+                var strictKey = KeyNames.Resolve(_settings.StrictAcceptKey);
+                var (map, slots) = ActivationMap.Build(attempt, strictKey, extendedKeys);
+
+                if (slots.Count == 0)
+                {
+                    Report($"{raw}：{attempt.Diagnostic}");
+                    Clear();
+                    return;
+                }
+
+                _current = attempt;
+                _currentQuery = raw;
+                _currentVersion = version;
+                _currentMode = mode;
+                _currentForeground = NativeMethods.GetForegroundWindow();
+                _currentCaret = anchorPoint;
+                _candidateHandle = snapshot.IsVisible ? AppServices.Reader.LocateNear(anchorPoint) : IntPtr.Zero;
+
+                Volatile.Write(ref _map, map);
+
+                Report($"{raw} → {attempt.Diagnostic}（来源 {_client.LastEndpointId ?? "-"}，" +
+                       $"锚点 {(snapshot.IsVisible ? "候选窗" : "插入符")}）");
+
+                SuggestionsReady?.Invoke(
+                    this,
+                    new CloudSuggestionsShownEventArgs
+                    {
+                        Slots = slots,
+                        Anchor = snapshot,
+                        EnglishMode = mode == InputMode.English,
+                    });
                 return;
             }
 
-            _current = set;
-            _currentQuery = raw;
-            _currentVersion = version;
-            _currentMode = mode;
-            _currentForeground = NativeMethods.GetForegroundWindow();
-            _currentCaret = anchorPoint;
-            _candidateHandle = snapshot.IsVisible ? AppServices.Reader.LocateNear(anchorPoint) : IntPtr.Zero;
-
-            Volatile.Write(ref _map, map);
-
-            Report($"{raw} → {set.Diagnostic}（来源 {_client.LastEndpointId ?? "-"}，" +
-                   $"锚点 {(snapshot.IsVisible ? "候选窗" : "插入符")}）");
-
-            SuggestionsReady?.Invoke(
-                this,
-                new CloudSuggestionsShownEventArgs
-                {
-                    Slots = slots,
-                    Anchor = snapshot,
-                    EnglishMode = mode == InputMode.English,
-                });
+            Report($"{raw}：{lastSet?.Diagnostic ?? $"云端无可用候选（原始 {rawCount} 条均被过滤）"}");
+            Clear();
         }
         catch (OperationCanceledException)
         {

@@ -2,6 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="云候选"
+        Style="{x:Null}"
         WindowStyle="None"
         AllowsTransparency="True"
         Background="Transparent"
@@ -14,6 +15,15 @@
         IsHitTestVisible="False"
         SnapsToDevicePixels="True"
         UseLayoutRounding="True">
+
+    <Window.Resources>
+        <!--
+            WPF-UI 带一个应用级的隐式 Window 样式（WindowStyle=SingleBorderWindow、
+            AllowsTransparency=False，并替换窗口模板），会把无焦点浮窗直接毁掉。
+            Style="{x:Null}" 是首选；这里再放一个本地空样式，防止某些版本上它被忽略。
+        -->
+        <Style TargetType="{x:Type Window}" />
+    </Window.Resources>
 
     <!--
         三条硬约束，任何一条被破坏都会毁掉输入体验：

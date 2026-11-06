@@ -45,8 +45,23 @@ public sealed class AppSettings
     /// <summary>配色主题：<c>System</c> 跟随系统，<c>Light</c> 浅色，<c>Dark</c> 深色。</summary>
     public string ThemeMode { get; set; } = "System";
 
-    /// <summary>窗口背景：<c>Auto</c> 按系统能力自动选择，<c>Solid</c> 纯色，<c>Acrylic</c> 强制亚克力。</summary>
+    /// <summary>
+    /// 窗口背景：<c>Auto</c> / <c>Solid</c> / <c>Acrylic</c>。
+    /// </summary>
+    /// <remarks>
+    /// 已停用，仅保留读取以兼容旧配置。设置窗口现在由 WPF-UI 负责外观，
+    /// 材质不再由本程序切换；候选浮窗的样式见 <see cref="PopupStyle"/>。
+    /// </remarks>
     public string BackdropMode { get; set; } = "Auto";
+
+    /// <summary>是否启用自定义窗口背景图。</summary>
+    public bool BackgroundImageEnabled { get; set; }
+
+    /// <summary>背景图绝对路径；为空表示未设置。</summary>
+    public string? BackgroundImagePath { get; set; }
+
+    /// <summary>背景图不透明度（0.05~1.0）。越小文字越清晰。</summary>
+    public double BackgroundImageOpacity { get; set; } = 0.35;
 
     /// <summary>英文状态下是否也联想（默认关，采纳会删除已输入的字母）。</summary>
     public bool EnglishModeAssistEnabled { get; set; }
