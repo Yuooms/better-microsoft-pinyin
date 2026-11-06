@@ -103,5 +103,4 @@ docs/                        架构、开发、扩展、排障、词库、路线
 
 ## 许可
 
-[MIT](LICENSE)。运行期依赖 WPF-UI（MIT）；内置词库的数据来源与许可、
-以及界面思路参考（BetterGI，未引入代码）见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+[MIT](LICENSE)。运行期依赖 WPF-UI（MIT）；内置词库的数据来源与许可见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
