@@ -25,6 +25,7 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
         SettingsPages = new ISettingsPage[]
         {
             new CloudAssistSettingsPage(this),
+            new WordbookSettingsPage(),
         };
     }
 

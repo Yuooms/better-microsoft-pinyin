@@ -31,6 +31,7 @@ internal static class LexiconWriter
             BuildSyllables(table),
             BuildCharacters(characters),
             BuildInitials(words.Count, index),
+            BuildWords(words),
         };
 
         WriteFile(path, sections);
@@ -175,6 +176,77 @@ internal static class LexiconWriter
         }
 
         return length;
+    }
+
+    /// <summary>
+    /// 词表区段：汉字词面、词频与音节序列，按词频降序排列，下标即热度排名。
+    /// </summary>
+    /// <remarks>
+    /// 布局见 <see cref="IWordCatalog"/> 的实现端说明。记录定长 16 字节，词面与音节各放一个池，
+    /// 这样随机访问是纯偏移计算，不需要扫描前序记录。
+    /// </remarks>
+    private static byte[] BuildWords(List<WordEntry> words)
+    {
+        var ordered = words
+            .OrderByDescending(w => w.Frequency)
+            .ThenBy(w => w.Pinyin, StringComparer.Ordinal)
+            .ToList();
+
+        var textOffsets = new int[ordered.Count];
+        var syllableOffsets = new int[ordered.Count];
+        var textBytes = 0;
+        var syllableCount = 0;
+
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            textOffsets[i] = textBytes;
+            textBytes += Encoding.UTF8.GetByteCount(ordered[i].Word);
+            syllableOffsets[i] = syllableCount * 2;
+            syllableCount += ordered[i].Syllables.Length;
+        }
+
+        // 文本池补到偶数，保证后面的音节池从 2 字节边界开始。
+        var paddedTextBytes = (textBytes + 1) & ~1;
+
+        using var stream = new MemoryStream();
+        using var writer = new BinaryWriter(stream, Encoding.ASCII, leaveOpen: true);
+
+        writer.Write((uint)ordered.Count);
+        writer.Write((uint)paddedTextBytes);
+        writer.Write((uint)(syllableCount * 2));
+        writer.Write((uint)16);
+
+        for (var i = 0; i < ordered.Count; i++)
+        {
+            var word = ordered[i];
+            writer.Write((uint)textOffsets[i]);
+            writer.Write((uint)syllableOffsets[i]);
+            writer.Write((uint)word.Frequency);
+            writer.Write((byte)Encoding.UTF8.GetByteCount(word.Word));
+            writer.Write((byte)word.Syllables.Length);
+            writer.Write((ushort)0);
+        }
+
+        foreach (var word in ordered)
+        {
+            writer.Write(Encoding.UTF8.GetBytes(word.Word));
+        }
+
+        if (paddedTextBytes != textBytes)
+        {
+            writer.Write((byte)0);
+        }
+
+        foreach (var word in ordered)
+        {
+            foreach (var id in word.Syllables)
+            {
+                writer.Write((ushort)id);
+            }
+        }
+
+        writer.Flush();
+        return stream.ToArray();
     }
 
     private static void WriteFile(string path, List<byte[]> sections)

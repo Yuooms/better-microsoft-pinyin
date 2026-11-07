@@ -37,7 +37,7 @@ public interface IPinyinLexicon
 }
 
 /// <summary>空词库：词库缺失或加载失败时使用，匹配器退回「放行」模式。</summary>
-public sealed class NullPinyinLexicon : IPinyinLexicon
+public sealed class NullPinyinLexicon : IPinyinLexicon, Lexicon.IWordCatalog
 {
     /// <summary>共享实例。</summary>
     public static NullPinyinLexicon Instance { get; } = new();
@@ -47,6 +47,22 @@ public sealed class NullPinyinLexicon : IPinyinLexicon
 
     /// <inheritdoc />
     public int WordCount => 0;
+
+    /// <inheritdoc />
+    public bool HasWordTable => false;
+
+    /// <inheritdoc />
+    public int Count => 0;
+
+    /// <inheritdoc />
+    public bool TryGet(int index, out Lexicon.WordEntryView entry)
+    {
+        entry = default;
+        return false;
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<int> Search(string query, int maxResults) => Array.Empty<int>();
 
     /// <inheritdoc />
     public bool TryGetReadings(char value, out ReadOnlySpan<ushort> syllableIds)

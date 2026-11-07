@@ -42,11 +42,13 @@ public static class ResultSanitizer
     /// <param name="raw">原始候选文本。</param>
     /// <param name="query">用户输入串，用于剔除与输入完全相同的回显。</param>
     /// <param name="options">长度约束；传 null 使用默认值。</param>
+    /// <param name="blocked">被用户遗忘的词，直接丢弃；传 null 表示不过滤。</param>
     /// <returns>清洗后的候选，保持原始顺序并去重。</returns>
     public static IReadOnlyList<string> Sanitize(
         IEnumerable<string> raw,
         string query,
-        SanitizeOptions? options = null)
+        SanitizeOptions? options = null,
+        IReadOnlySet<string>? blocked = null)
     {
         var limits = options ?? SanitizeOptions.Default;
         var result = new List<string>(16);
@@ -77,6 +79,11 @@ public static class ResultSanitizer
             }
 
             if (!seen.Add(text))
+            {
+                continue;
+            }
+
+            if (blocked is not null && blocked.Contains(text))
             {
                 continue;
             }

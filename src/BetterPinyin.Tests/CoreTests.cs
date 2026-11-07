@@ -1,8 +1,10 @@
 using BetterPinyin.Core.Cloud;
 using BetterPinyin.Core.Cloud.Bing;
+using BetterPinyin.Core.Lexicon;
 using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Ranking;
 using BetterPinyin.Core.Settings;
+using BetterPinyin.Core.Wordbook;
 
 namespace BetterPinyin.Tests;
 
@@ -73,12 +75,14 @@ internal static class CoreTests
 {
     public static void RunAll()
     {
-        Run("[1/6] Bing 响应解析", Parser);
-        Run("[2/6] 候选清洗", Sanitizer);
-        Run("[3/6] 拼音匹配", Matcher);
-        Run("[4/6] 严格 / 扩展分区", Selector);
-        Run("[5/6] 排序合并（旧链路）", Ranker);
-        Run("[6/6] 设置持久化", Settings);
+        Run("[1/8] Bing 响应解析", Parser);
+        Run("[2/8] 候选清洗", Sanitizer);
+        Run("[3/8] 拼音匹配", Matcher);
+        Run("[4/8] 严格 / 扩展分区", Selector);
+        Run("[5/8] 排序合并（旧链路）", Ranker);
+        Run("[6/8] 设置持久化", Settings);
+        Run("[7/8] 词库词表", Catalog);
+        Run("[8/8] 用户词库", Wordbook);
     }
 
     /// <summary>逐组执行，一组崩掉不影响其它组出结论。</summary>
@@ -92,6 +96,222 @@ internal static class CoreTests
         catch (Exception ex)
         {
             Check.True(false, $"{name} 抛出 {ex.GetType().Name}：{ex.Message}");
+        }
+    }
+
+    private static void Wordbook()
+    {
+        var table = SyllableTable.Default;
+        Check.True(table.TryGetInitials("yisitalu", out var initials), "全拼应能切分");
+        Check.Equal("ystl", initials, "声母串");
+
+        var book = new UserWordbook();
+        Check.True(book.Learn("伊斯塔露", "yisitalu", "ystl", out var word), "应能学到新词");
+        Check.Equal(1, word.Hits, "首次 hits=1");
+        Check.Equal("ystl", word.Initials, "词条自带声母串");
+        Check.Equal(1, book.Count, "词条数");
+
+        Check.True(book.Learn("伊斯塔露", "yisitalu", "yisitalu", out var again), "重复学习应成功");
+        Check.Equal(2, again.Hits, "再次 hits=2");
+        Check.Equal(1, book.Count, "重复学习不新增条目");
+
+        Check.Equal(1, book.MatchInitials("yst", 5).Count, "简拼前缀应命中");
+        Check.Equal(0, book.MatchPinyin("yisita", 5).Count, "全拼必须完全相等");
+        Check.Equal(1, book.MatchPinyin("yisitalu", 5).Count, "全拼完全相等才命中");
+
+        book.SetAdjustment("伊斯塔露", "yisitalu", WordAdjustment.Hidden);
+        Check.Equal(0, book.MatchInitials("ystl", 5).Count, "遗忘后不再命中");
+        Check.Equal(1, book.Count, "遗忘后仍保留条目");
+        Check.True(book.IsPinyinHidden("yisitalu"), "拼音进入隐藏集合");
+
+        book.SetAdjustment("伊斯塔露", "yisitalu", WordAdjustment.Normal);
+        Check.Equal(1, book.MatchInitials("ystl", 5).Count, "恢复后重新命中");
+
+        book.SetAdjustment("中国", "zhongguo", WordAdjustment.Reduced);
+        Check.Equal(WordAdjustment.Reduced, book.AdjustmentOf("中国"), "内置词覆盖生效");
+        Check.Equal(WordAdjustment.Normal, book.AdjustmentOf("不存在"), "未收录词为默认");
+        Check.Equal(WordAdjustment.Reduced, book.AdjustmentOfPinyin("zhongguo"), "拼音档位可查");
+
+        Check.False(book.Learn("测试", "ceshi2", string.Empty, out _), "非法拼音应拒绝");
+        Check.False(book.Learn("单", "dan", string.Empty, out _), "单字不记忆");
+
+        var directory = Path.Combine(Path.GetTempPath(), $"bp-words-{Guid.NewGuid():N}");
+        var path = Path.Combine(directory, "words.json");
+        try
+        {
+            using var store = new WordbookStore(path);
+            Check.True(store.Save(book), $"保存应成功：{store.LastError}");
+
+            var loaded = store.Load();
+            Check.Equal(book.Count, loaded.Count, "词条数往返一致");
+            Check.Equal(2, loaded.Words[0].Hits, "hits 往返一致");
+            Check.Equal(WordAdjustment.Reduced, loaded.AdjustmentOf("中国"), "覆盖往返一致");
+
+            File.WriteAllText(path, "{ 这不是 json");
+            var broken = store.Load();
+            Check.Equal(0, broken.Count, "损坏文件回退空词库");
+            Check.True(store.LastError is not null, "损坏时记录错误");
+
+            var udp = new MspyPhraseStore(
+                Path.Combine(directory, "test.lex"),
+                Path.Combine(directory, "backup"));
+            Check.True(
+                udp.Merge(new[] { new MspyPhrase("yisitalu", 2, "伊斯塔露") }, false, out _),
+                $"短语应写入成功：{udp.LastError}");
+
+            var read = udp.Read(out var readError);
+            Check.True(readError is null, $"短语应能读回：{readError}");
+            Check.Equal(1, read.Count, "短语条数");
+            Check.Equal("yisitalu", read[0].Pinyin, "拼音往返");
+            Check.Equal(2, read[0].Position, "位置往返");
+            Check.Equal("伊斯塔露", read[0].Text, "文本往返");
+
+            udp.Merge(new[] { new MspyPhrase("ystl", 2, "伊斯塔露") }, false, out _);
+            Check.Equal(2, udp.Read(out _).Count, "合并不丢已有条目");
+
+            udp.Merge(new[] { new MspyPhrase("ystl", 3, "别的词") }, false, out var conflicts);
+            Check.Equal(1, conflicts.Count, "同拼音不同文本判冲突");
+            Check.Equal("伊斯塔露", udp.Read(out _).First(p => p.Pinyin == "ystl").Text, "冲突不覆盖");
+
+            udp.Merge(new[] { new MspyPhrase("ystl", 4, "伊斯塔露") }, false, out _);
+            Check.Equal(4, udp.Read(out _).First(p => p.Pinyin == "ystl").Position, "同文本可更新位置");
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+
+        var builtin = BinaryLexicon.LoadDefault(table, out _);
+        var composite = new CompositePinyinLexicon(builtin, book);
+        Check.True(composite.IsLoaded, "组合词库跟随内置");
+        var expanded = composite.ExpandAbbreviation("ystl", 4);
+        Check.True(expanded.Count > 0 && expanded[0] == "yisitalu", "用户词排在展开首位");
+
+        var emptyBuiltin = new CompositePinyinLexicon(NullPinyinLexicon.Instance, book);
+        Check.False(emptyBuiltin.IsLoaded, "内置缺失时组合词库仍为未加载");
+
+        // 融合：词库只补空位，云端整词匹配仍然优先。
+        var matcher = new PinyinMatcher(builtin, fuzzyEnabled: false);
+        var options = SuggestionSelectionOptions.Default;
+        Check.Equal(PinyinMatchKind.Strict, matcher.Match("yisitalu", "伊斯塔露").Kind, "直接匹配应为 Strict");
+
+        var offline = SuggestionSelector.Select(
+            "yisitalu",
+            Array.Empty<string>(),
+            null,
+            matcher,
+            options,
+            providerId: "bing",
+            wordbook: new[] { "伊斯塔露" });
+        Check.True(offline.Strict is not null, $"云端为空时词库补严格槽（诊断：{offline.Diagnostic}，条数 {offline.Count}）");
+        Check.Equal(SuggestionSelector.WordbookProviderId, offline.Strict!.ProviderId, "来源标记为词库");
+        Check.Equal("yisitalu", offline.Strict.Reading, "Reading 记录实际请求串");
+
+        var cloudWins = SuggestionSelector.Select(
+            "yisitalu",
+            new[] { "伊斯塔路" },
+            null,
+            matcher,
+            options,
+            providerId: "bing",
+            wordbook: new[] { "伊斯塔露" });
+        Check.Equal("伊斯塔路", cloudWins.Strict?.Text, "云端整词匹配优先于词库");
+        Check.Equal("yisitalu", cloudWins.Strict?.Reading, "云端 Reading 同样是请求串");
+
+        var none = SuggestionSelector.Select(
+            "yisitalu",
+            Array.Empty<string>(),
+            null,
+            matcher,
+            options);
+        Check.True(none.IsEmpty, "没有云端也没有词库时为空");
+    }
+
+    private static void Catalog()
+    {
+        var table = SyllableTable.Default;
+        var lexicon = BinaryLexicon.LoadDefault(table, out var error);
+        Check.True(lexicon.IsLoaded, $"词库应能加载：{error}");
+        Check.Equal(150000, lexicon.WordCount, "词条数");
+
+        var catalog = (IWordCatalog)lexicon;
+        Check.True(catalog.HasWordTable, "v2 词库应带词表");
+        Check.Equal(150000, catalog.Count, "词表条数");
+
+        Check.True(catalog.TryGet(0, out var first), "应能取到首条");
+        Check.True(first.Text.Length > 0, "首条词面非空");
+        Check.True(first.Pinyin.Length > 0 && first.Pinyin.All(char.IsAsciiLetterLower), "首条拼音为小写字母");
+        Check.Equal(0, first.Index, "首条下标为 0");
+        Check.False(catalog.TryGet(-1, out _), "负下标应失败");
+        Check.False(catalog.TryGet(catalog.Count, out _), "越界下标应失败");
+
+        var byFull = catalog.Search("zhongguo", 10);
+        Check.True(byFull.Count > 0 && byFull[0] == 1, "全拼前缀应命中「中国」");
+        Check.True(catalog.Search("zg", 10).Contains(1), "声母前缀应命中「中国」");
+        var byHan = catalog.Search("中国", 5);
+        Check.True(byHan.Count > 0 && byHan[0] == 1, "汉字子串应命中「中国」");
+        Check.Equal(0, catalog.Search("vvvv", 10).Count, "无关查询应为空");
+
+        var head = catalog.Search(string.Empty, 5);
+        Check.Equal(5, head.Count, "空查询返回前 5 条");
+        Check.Equal(0, head[0], "空查询按下标升序");
+        Check.Equal(4, head[4], "空查询按下标升序");
+
+        var path = Path.Combine(AppContext.BaseDirectory, "lexicon.bin");
+
+        // v1 兼容：只改版本号与区段数，前三个区段保持原样。
+        var legacy = Path.Combine(Path.GetTempPath(), $"bp-lex-v1-{Guid.NewGuid():N}.bin");
+        try
+        {
+            var bytes = File.ReadAllBytes(path);
+            bytes[4] = 1;
+            bytes[5] = 0;
+            bytes[6] = 3;
+            bytes[7] = 0;
+            File.WriteAllBytes(legacy, bytes);
+
+            var v1 = BinaryLexicon.TryLoad(legacy, table, out var v1Error);
+            Check.True(v1 is not null, $"v1 文件应能加载：{v1Error}");
+            Check.False(v1!.HasWordTable, "v1 没有词表");
+            Check.Equal(0, v1.Count, "v1 词表条数为 0");
+            Check.Equal(150000, v1.WordCount, "v1 词条计数仍可读");
+            Check.True(v1.ExpandAbbreviation("ystl", 2).Count > 0, "v1 简拼展开照常");
+        }
+        finally
+        {
+            if (File.Exists(legacy))
+            {
+                File.Delete(legacy);
+            }
+        }
+
+        // 词表记录长度被改成不支持的值：只降级词表，整库仍可用。
+        var broken = Path.Combine(Path.GetTempPath(), $"bp-lex-broken-{Guid.NewGuid():N}.bin");
+        try
+        {
+            var bytes = File.ReadAllBytes(path);
+            var entry = LexiconFormat.HeaderSize + (3 * LexiconFormat.SectionEntrySize);
+            var sectionOffset = (int)BitConverter.ToUInt32(bytes, entry);
+            BitConverter.GetBytes(20u).CopyTo(bytes, sectionOffset + 12);
+            File.WriteAllBytes(broken, bytes);
+
+            var partial = BinaryLexicon.TryLoad(broken, table, out var brokenError);
+            Check.True(partial is not null, $"词表损坏应只降级词表：{brokenError}");
+            if (partial is not null)
+            {
+                Check.False(partial.HasWordTable, "损坏后没有词表");
+                Check.Equal(150000, partial.WordCount, "损坏后读音与简拼仍可用");
+            }
+        }
+        finally
+        {
+            if (File.Exists(broken))
+            {
+                File.Delete(broken);
+            }
         }
     }
 

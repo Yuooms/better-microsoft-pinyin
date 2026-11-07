@@ -3,6 +3,7 @@ using BetterPinyin.Core.Cloud;
 using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Ranking;
 using BetterPinyin.Core.Settings;
+using BetterPinyin.Core.Wordbook;
 using BetterPinyin.Interop.Ime;
 using BetterPinyin.Interop.Input;
 using BetterPinyin.Interop.Uia;
@@ -141,6 +142,21 @@ internal sealed class CloudAssistController : IDisposable
         Clear();
     }
 
+    /// <summary>
+    /// 丢弃当前输入与浮窗状态。
+    /// </summary>
+    /// <remarks>
+    /// 设置窗口获得或失去焦点时调用。键盘钩子是全局的：在设置页搜索框里打的字母
+    /// 会照常进入组字缓冲，切走之后第一个按键就会带着这串残留去查询一次。
+    /// 这里把缓冲、防抖任务与浮窗一起清掉，窗口边界就闭合了。
+    /// </remarks>
+    public void DismissInput()
+    {
+        CancelPendingQuery();
+        _tracker.Reset();
+        Clear();
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {
@@ -199,6 +215,14 @@ internal sealed class CloudAssistController : IDisposable
 
         if (modifiers == ModifierKeys.None && map.Count > 0 && map.TryGet(e.VirtualKey, out var target))
         {
+            // 映射是在某个窗口里发布的。前台已经换了就说明用户切走了窗口，
+            // 这时再吞键会把词打进别的窗口（典型场景：浮窗弹着，Alt+Tab 到设置页按采纳键）。
+            if (NativeMethods.GetForegroundWindow() != _currentForeground)
+            {
+                DismissInput();
+                return;
+            }
+
             e.Handled = true;
             _swallowUntilKeyUp.Add(e.VirtualKey);
 
@@ -302,6 +326,9 @@ internal sealed class CloudAssistController : IDisposable
     {
         if (IsOwnProcessForeground() || IsBlockedProcess())
         {
+            // 在自己的窗口里打字不该触发联想；顺手把组字缓冲清掉，
+            // 否则切走之后第一个按键会带着这串残留去查询。
+            _tracker.Reset();
             Clear();
             return;
         }
@@ -334,6 +361,30 @@ internal sealed class CloudAssistController : IDisposable
                 ExtendedEnabled: _settings.ExtendedEnabled,
                 ExtendedMaxCount: Math.Clamp(_settings.ExtendedMaxCount, 1, 4));
 
+            var wordbook = BuildWordbookCandidates(raw);
+
+            // 本地优先：词库能整词命中就直接出浮窗，不再等网络。
+            // 只认严格槽——否则一个前缀也会被当成「已经记住了」，把云端结果全挡掉。
+            if (_settings.WordbookLocalFirst && wordbook.Count > 0)
+            {
+                var localSet = SuggestionSelector.Select(
+                    raw,
+                    Array.Empty<string>(),
+                    local,
+                    _matcher,
+                    options,
+                    snapshot.Items.Count,
+                    snapshot.Quality == CandidateReadQuality.Exact,
+                    SuggestionSelector.WordbookProviderId,
+                    wordbook);
+
+                if (localSet.Strict is not null)
+                {
+                    Publish(localSet, raw, version, mode, anchorPoint, snapshot, "词库");
+                    return;
+                }
+            }
+
             SuggestionSet? lastSet = null;
             var rawCount = 0;
 
@@ -348,11 +399,12 @@ internal sealed class CloudAssistController : IDisposable
                 }
 
                 // 回显比对要用本次实际请求的串：简拼展开后请求的是全拼（rineiwa），不是 raw（rnw）。
-                var cleaned = ResultSanitizer.Sanitize(items, request, SanitizeOptions.Extended);
-                if (cleaned.Count == 0)
-                {
-                    continue;
-                }
+                // 被遗忘的词在这里就剔掉，不让它进入后续分区。
+                var cleaned = ResultSanitizer.Sanitize(
+                    items,
+                    request,
+                    SanitizeOptions.Extended,
+                    AppServices.Wordbook.HiddenTexts);
 
                 // 分区同样必须用实际请求串。拿 raw 校验时，rnw（3 个字母）永远匹配不上
                 // 「日内瓦公约」（5 个音节），整个批次会被判成 None 丢掉。
@@ -364,7 +416,8 @@ internal sealed class CloudAssistController : IDisposable
                     options,
                     snapshot.Items.Count,
                     snapshot.Quality == CandidateReadQuality.Exact,
-                    _client.LastEndpointId ?? "bing");
+                    _client.LastEndpointId ?? "bing",
+                    wordbook);
 
                 lastSet = attempt;
 
@@ -374,38 +427,7 @@ internal sealed class CloudAssistController : IDisposable
                     continue;
                 }
 
-                var extendedKeys = ResolveExtendedKeys(attempt, snapshot);
-                var strictKey = KeyNames.Resolve(_settings.StrictAcceptKey);
-                var (map, slots) = ActivationMap.Build(attempt, strictKey, extendedKeys);
-
-                if (slots.Count == 0)
-                {
-                    Report($"{raw}：{attempt.Diagnostic}");
-                    Clear();
-                    return;
-                }
-
-                _current = attempt;
-                _currentQuery = raw;
-                _currentVersion = version;
-                _currentMode = mode;
-                _currentForeground = NativeMethods.GetForegroundWindow();
-                _currentCaret = anchorPoint;
-                _candidateHandle = snapshot.IsVisible ? AppServices.Reader.LocateNear(anchorPoint) : IntPtr.Zero;
-
-                Volatile.Write(ref _map, map);
-
-                Report($"{raw} → {attempt.Diagnostic}（来源 {_client.LastEndpointId ?? "-"}，" +
-                       $"锚点 {(snapshot.IsVisible ? "候选窗" : "插入符")}）");
-
-                SuggestionsReady?.Invoke(
-                    this,
-                    new CloudSuggestionsShownEventArgs
-                    {
-                        Slots = slots,
-                        Anchor = snapshot,
-                        EnglishMode = mode == InputMode.English,
-                    });
+                Publish(attempt, raw, version, mode, anchorPoint, snapshot, _client.LastEndpointId ?? "-");
                 return;
             }
 
@@ -446,6 +468,102 @@ internal sealed class CloudAssistController : IDisposable
     }
 
     /// <summary>
+    /// 把一次分区结果发布成浮窗与按键映射。
+    /// </summary>
+    /// <param name="set">分区结果。</param>
+    /// <param name="raw">用户原始输入串。</param>
+    /// <param name="version">组字版本。</param>
+    /// <param name="mode">输入模式。</param>
+    /// <param name="anchorPoint">锚点。</param>
+    /// <param name="snapshot">候选窗快照。</param>
+    /// <param name="source">来源标识，只用于诊断文案。</param>
+    private void Publish(
+        SuggestionSet set,
+        string raw,
+        long version,
+        InputMode mode,
+        AnchorPoint anchorPoint,
+        CandidateWindowSnapshot snapshot,
+        string source)
+    {
+        var extendedKeys = ResolveExtendedKeys(set, snapshot);
+        var strictKey = KeyNames.Resolve(_settings.StrictAcceptKey);
+        var (map, slots) = ActivationMap.Build(set, strictKey, extendedKeys);
+
+        if (slots.Count == 0)
+        {
+            Report($"{raw}：{set.Diagnostic}");
+            Clear();
+            return;
+        }
+
+        _current = set;
+        _currentQuery = raw;
+        _currentVersion = version;
+        _currentMode = mode;
+        _currentForeground = NativeMethods.GetForegroundWindow();
+        _currentCaret = anchorPoint;
+        _candidateHandle = snapshot.IsVisible ? AppServices.Reader.LocateNear(anchorPoint) : IntPtr.Zero;
+
+        Volatile.Write(ref _map, map);
+
+        Report($"{raw} → {set.Diagnostic}（来源 {source}，" +
+               $"锚点 {(snapshot.IsVisible ? "候选窗" : "插入符")}）");
+
+        SuggestionsReady?.Invoke(
+            this,
+            new CloudSuggestionsShownEventArgs
+            {
+                Slots = slots,
+                Anchor = snapshot,
+                EnglishMode = mode == InputMode.English,
+            });
+    }
+
+    /// <summary>
+    /// 从用户词库里找与本次输入相关的词。
+    /// </summary>
+    /// <remarks>
+    /// 先按完整拼音找，再按声母找。用户词库最多 5000 条，线性扫一遍是微秒级；
+    /// 结果按使用次数排序，最多取 3 条，避免一次弹出七八行。
+    /// </remarks>
+    private IReadOnlyList<string> BuildWordbookCandidates(string raw)
+    {
+        if (!_settings.WordbookEnabled)
+        {
+            return Array.Empty<string>();
+        }
+
+        var book = AppServices.Wordbook;
+        if (book.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        var matched = new List<UserWord>(4);
+        matched.AddRange(book.MatchPinyin(raw, 3));
+
+        if (matched.Count < 3)
+        {
+            foreach (var word in book.MatchInitials(raw, 3))
+            {
+                if (!matched.Exists(w => string.Equals(w.Text, word.Text, StringComparison.Ordinal)))
+                {
+                    matched.Add(word);
+                }
+            }
+        }
+
+        if (matched.Count == 0)
+        {
+            return Array.Empty<string>();
+        }
+
+        matched.Sort((a, b) => b.Hits.CompareTo(a.Hits));
+        return matched.Take(3).Select(w => w.Text).ToList();
+    }
+
+    /// <summary>
     /// 分配扩展槽的采纳键。
     /// </summary>
     /// <remarks>
@@ -460,30 +578,70 @@ internal sealed class CloudAssistController : IDisposable
         }
 
         var max = Math.Clamp(_settings.ExtendedMaxCount, 1, 4);
+        var strictKey = KeyNames.Resolve(_settings.StrictAcceptKey);
 
         if (string.Equals(_settings.ExtendedKeyMode, "Manual", StringComparison.OrdinalIgnoreCase))
         {
             var manual = KeyNames.ParseDigits(_settings.ExtendedKeys);
-            return manual.Take(max).ToArray();
+            return manual.Where(key => key != strictKey).Take(max).ToArray();
         }
 
         var localCount = snapshot.Quality == CandidateReadQuality.Exact && snapshot.Items.Count > 0
             ? snapshot.Items.Count
             : 5;
 
+        // 采纳键若被设成数字，扩展槽要跳过它，否则两个槽会抢同一个键。
         var keys = new List<int>(max);
-        for (var i = 0; i < max; i++)
+        var digit = localCount;
+        while (keys.Count < max && digit < 9)
         {
-            var digit = localCount + 1 + i;
-            if (digit > 9)
+            digit++;
+            var key = '0' + digit;
+            if (key == strictKey)
             {
-                break;
+                continue;
             }
 
-            keys.Add('0' + digit);
+            keys.Add(key);
         }
 
         return keys;
+    }
+
+    /// <summary>
+    /// 词真的上屏之后的收口动作：记入用户词库。
+    /// </summary>
+    /// <param name="target">被采纳的目标。</param>
+    /// <param name="query">用户原始输入串。</param>
+    /// <remarks>
+    /// 只在这一个地方学，且只在 <c>SendUnicodeText</c> 返回 true 之后调用。
+    /// 不要放进 <c>finally</c>——那里同时覆盖数字键回放、代次变化、候选窗未消失等失败分支，
+    /// 会把没上屏的词也记进去。
+    /// </remarks>
+    private void CommitSucceeded(in ActivationTarget target, string query)
+    {
+        if (!_settings.WordbookLearnOnAccept)
+        {
+            return;
+        }
+
+        var text = target.Suggestion.Text;
+        if (!ResultSanitizer.IsAllChinese(text))
+        {
+            return;
+        }
+
+        // Reading 是本次实际请求的拼音串（简拼已被展开成全拼）；缺失时退回原始输入。
+        var pinyin = target.Suggestion.Reading;
+        if (string.IsNullOrEmpty(pinyin))
+        {
+            pinyin = query;
+        }
+
+        if (AppServices.Wordbook.Learn(text, pinyin, query, out var word))
+        {
+            Report($"已记入词库：{word.Text}（{word.Pinyin}，第 {word.Hits} 次）");
+        }
     }
 
     private async Task CommitAsync(
@@ -533,6 +691,7 @@ internal sealed class CloudAssistController : IDisposable
             if (KeySender.SendUnicodeText(target.Suggestion.Text))
             {
                 Report($"已上屏：{target.Suggestion.Text}");
+                CommitSucceeded(target, query);
             }
             else
             {
@@ -610,6 +769,7 @@ internal sealed class CloudAssistController : IDisposable
             if (KeySender.SendUnicodeText(target.Suggestion.Text))
             {
                 Report($"已替换上屏：{target.Suggestion.Text}");
+                CommitSucceeded(target, query);
             }
             else
             {

@@ -11,21 +11,29 @@ namespace BetterPinyin.Core.Lexicon;
 /// 切片与二分，因此加载在 10~30 ms 量级，常驻内存就是文件本身的大小。
 /// 文件缺失、魔数不符、版本不符、音节表对不上，一律返回 null，由调用方降级为空词库。
 /// </remarks>
-public sealed class BinaryLexicon : IPinyinLexicon
+public sealed class BinaryLexicon : IPinyinLexicon, IWordCatalog
 {
     private readonly byte[] _data;
     private readonly SyllableTable _table;
     private readonly SectionRef[] _sections;
     private readonly CharRange[] _charRanges;
+    private readonly WordTable? _words;
     private readonly int _wordCount;
 
-    private BinaryLexicon(byte[] data, SyllableTable table, SectionRef[] sections, CharRange[] ranges, int wordCount)
+    private BinaryLexicon(
+        byte[] data,
+        SyllableTable table,
+        SectionRef[] sections,
+        CharRange[] ranges,
+        int wordCount,
+        WordTable? words)
     {
         _data = data;
         _table = table;
         _sections = sections;
         _charRanges = ranges;
         _wordCount = wordCount;
+        _words = words;
     }
 
     /// <inheritdoc />
@@ -36,6 +44,28 @@ public sealed class BinaryLexicon : IPinyinLexicon
 
     /// <summary>词库文件字节数。</summary>
     public int ByteLength => _data.Length;
+
+    /// <inheritdoc />
+    public bool HasWordTable => _words is not null;
+
+    /// <inheritdoc />
+    public int Count => _words?.Count ?? 0;
+
+    /// <inheritdoc />
+    public bool TryGet(int index, out WordEntryView entry)
+    {
+        if (_words is null)
+        {
+            entry = default;
+            return false;
+        }
+
+        return _words.TryGet(index, out entry);
+    }
+
+    /// <inheritdoc />
+    public IReadOnlyList<int> Search(string query, int maxResults) =>
+        _words?.Search(query, maxResults) ?? Array.Empty<int>();
 
     /// <summary>
     /// 尝试加载词库。
@@ -70,9 +100,9 @@ public sealed class BinaryLexicon : IPinyinLexicon
             }
 
             var version = BinaryPrimitives.ReadUInt16LittleEndian(data.AsSpan(4, 2));
-            if (version != LexiconFormat.Version)
+            if (version < LexiconFormat.MinVersion || version > LexiconFormat.Version)
             {
-                error = $"版本不符：文件 {version}，程序 {LexiconFormat.Version}";
+                error = $"版本不符：文件 {version}，程序支持 {LexiconFormat.MinVersion}~{LexiconFormat.Version}";
                 return null;
             }
 
@@ -112,9 +142,18 @@ public sealed class BinaryLexicon : IPinyinLexicon
 
             var wordCount = ReadWordCount(data, sections[(int)LexiconFormat.Section.Initials]);
 
-            return new BinaryLexicon(data, table, sections, ranges, wordCount);
+            // 词表是可选区段：v1 文件没有，解析失败也只降级词表，不影响读音与简拼展开。
+            WordTable? words = null;
+            var wordsSection = sections[(int)LexiconFormat.Section.Words];
+            if (wordsSection.Length > 0 &&
+                WordTable.TryCreate(data, wordsSection.Offset, wordsSection.Length, table, out var parsed, out _))
+            {
+                words = parsed;
+            }
+
+            return new BinaryLexicon(data, table, sections, ranges, wordCount, words);
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or IndexOutOfRangeException)
         {
             error = $"{ex.GetType().Name}：{ex.Message}";
             return null;

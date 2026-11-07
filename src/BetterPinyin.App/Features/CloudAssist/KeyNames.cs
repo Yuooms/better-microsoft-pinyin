@@ -9,8 +9,9 @@ internal readonly record struct AcceptKeyOption(string Id, string Label, int Vir
 
 /// <summary>采纳键的名字与键码映射。</summary>
 /// <remarks>
-/// 键位刻意避开微软拼音的翻页键（<c>-</c> <c>=</c> <c>[</c> <c>]</c> <c>,</c> <c>.</c>），
-/// 也避开数字键——数字留给「接在本地候选之后」的扩展槽。
+/// 键位刻意避开微软拼音的翻页键（<c>-</c> <c>=</c> <c>[</c> <c>]</c> <c>,</c> <c>.</c>）。
+/// 数字键 1~9 也开放：用户可以把云联想固定到「候选 2」，与写入微软拼音自定义短语的位置对齐。
+/// 代价是会盖过输入法同号候选，所以扩展槽分配数字时要跳过已被采纳键占用的那个。
 /// </remarks>
 internal static class KeyNames
 {
@@ -18,15 +19,31 @@ internal static class KeyNames
     public const int Oem3 = 0xC0;
 
     /// <summary>可选键列表。</summary>
-    public static IReadOnlyList<AcceptKeyOption> Options { get; } = new[]
+    public static IReadOnlyList<AcceptKeyOption> Options { get; } = BuildOptions();
+
+    private static IReadOnlyList<AcceptKeyOption> BuildOptions()
     {
-        new AcceptKeyOption("Oem3", "·", Oem3, "数字 1 左侧的键，中文标点下输出「·」"),
-        new AcceptKeyOption("Tab", "Tab", 0x09, "微软拼音组字时按 Tab 会调出 Bing 搜索，可能冲突"),
-        new AcceptKeyOption("Semicolon", ";", 0xBA, "分号"),
-        new AcceptKeyOption("Backslash", "\\", 0xDC, "反斜杠"),
-        new AcceptKeyOption("Quote", "'", 0xDE, "单引号"),
-        new AcceptKeyOption("Slash", "/", 0xBF, "斜杠"),
-    };
+        var options = new List<AcceptKeyOption>
+        {
+            new("Oem3", "·", Oem3, "数字 1 左侧的键，中文标点下输出「·」"),
+            new("Tab", "Tab", 0x09, "微软拼音组字时按 Tab 会调出 Bing 搜索，可能冲突"),
+            new("Semicolon", ";", 0xBA, "分号"),
+            new("Backslash", "\\", 0xDC, "反斜杠"),
+            new("Quote", "'", 0xDE, "单引号"),
+            new("Slash", "/", 0xBF, "斜杠"),
+        };
+
+        for (var digit = 1; digit <= 9; digit++)
+        {
+            options.Add(new AcceptKeyOption(
+                $"D{digit}",
+                digit.ToString(),
+                (char)('0' + digit),
+                "数字键会盖过输入法同号候选，建议与「写入位置」设成同一个数字"));
+        }
+
+        return options;
+    }
 
     /// <summary>按标识取虚拟键码，未知标识退回 <c>·</c>。</summary>
     /// <param name="id">标识。</param>

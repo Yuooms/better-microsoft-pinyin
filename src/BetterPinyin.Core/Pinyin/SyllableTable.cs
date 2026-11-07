@@ -249,6 +249,108 @@ public sealed class SyllableTable
         return true;
     }
 
+    /// <summary>
+    /// 把一串字母切分成音节，返回每个音节的标准拼写。
+    /// </summary>
+    /// <param name="text">小写字母串。</param>
+    /// <param name="fuzzy">是否接受模糊音变体拼写。</param>
+    /// <param name="syllables">切出的音节，按顺序。变体拼写会归一成标准拼写。</param>
+    /// <returns>能被完整切分返回 true。</returns>
+    public bool TrySplit(ReadOnlySpan<char> text, bool fuzzy, out IReadOnlyList<string> syllables)
+    {
+        syllables = Array.Empty<string>();
+        if (text.Length == 0 || text.Length > 48)
+        {
+            return false;
+        }
+
+        var counts = new int[text.Length + 1];
+        var previous = new int[text.Length + 1];
+        var chosen = new string?[text.Length + 1];
+        Array.Fill(counts, int.MaxValue);
+        Array.Fill(previous, -1);
+        counts[0] = 0;
+
+        for (var i = 0; i < text.Length; i++)
+        {
+            if (counts[i] == int.MaxValue)
+            {
+                continue;
+            }
+
+            if (!_spellingsByFirstChar.TryGetValue(text[i], out var candidates))
+            {
+                continue;
+            }
+
+            foreach (var spelling in candidates)
+            {
+                var end = i + spelling.Length;
+                if (end > text.Length)
+                {
+                    continue;
+                }
+
+                if (!text.Slice(i, spelling.Length).SequenceEqual(spelling) ||
+                    !_idsBySpelling.TryGetValue(spelling, out var ids))
+                {
+                    continue;
+                }
+
+                if (!fuzzy && !IsCanonicalSpelling(spelling, ids))
+                {
+                    continue;
+                }
+
+                if (counts[end] > counts[i] + 1)
+                {
+                    counts[end] = counts[i] + 1;
+                    previous[end] = i;
+                    chosen[end] = GetCanonical(ids[0]);
+                }
+            }
+        }
+
+        if (counts[text.Length] == int.MaxValue)
+        {
+            return false;
+        }
+
+        var parts = new List<string>(counts[text.Length]);
+        for (var position = text.Length; position > 0; position = previous[position])
+        {
+            parts.Add(chosen[position]!);
+        }
+
+        parts.Reverse();
+        syllables = parts;
+        return true;
+    }
+
+    /// <summary>
+    /// 取一个全拼串的声母串。
+    /// </summary>
+    /// <param name="pinyin">无调全拼，音节之间不分隔。</param>
+    /// <param name="initials">归一后的声母串。</param>
+    /// <returns>能被完整切分返回 true。</returns>
+    public bool TryGetInitials(string pinyin, out string initials)
+    {
+        initials = string.Empty;
+        if (!TrySplit(pinyin, fuzzy: false, out var parts))
+        {
+            return false;
+        }
+
+        var builder = new System.Text.StringBuilder(parts.Count);
+        foreach (var part in parts)
+        {
+            builder.Append(NormalizeInitial(part[0]));
+        }
+
+        initials = builder.ToString();
+        return true;
+    }
+
     private static IEnumerable<string> GenerateSpellings(string syllable)
     {
         yield return syllable;

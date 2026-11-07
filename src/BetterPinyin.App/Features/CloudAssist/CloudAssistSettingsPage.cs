@@ -1,5 +1,5 @@
-using BetterPinyin.Core.Features;
 using BetterPinyin.App.Features.CloudAssist.Views;
+using BetterPinyin.Core.Features;
 
 namespace BetterPinyin.App.Features.CloudAssist;
 
@@ -32,4 +32,28 @@ internal sealed class CloudAssistSettingsPage : ISettingsPage
 
     /// <inheritdoc />
     public object CreateView() => new CloudAssistPage(_feature);
+}
+
+/// <summary>
+/// 词库管理页声明。
+/// </summary>
+internal sealed class WordbookSettingsPage : ISettingsPage
+{
+    /// <inheritdoc />
+    public string Id => "cloud-assist.wordbook";
+
+    /// <inheritdoc />
+    public string Title => "词库";
+
+    /// <inheritdoc />
+    public string Glyph => "\uE8F1";
+
+    /// <inheritdoc />
+    public string? Description => "查看与调整词条，把词写进微软拼音";
+
+    /// <inheritdoc />
+    public Type ViewType => typeof(WordbookPage);
+
+    /// <inheritdoc />
+    public object CreateView() => new WordbookPage();
 }

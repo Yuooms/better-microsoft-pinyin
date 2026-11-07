@@ -2,6 +2,7 @@ using BetterPinyin.App.Features.CloudAssist;
 using BetterPinyin.Core.Lexicon;
 using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Settings;
+using BetterPinyin.Core.Wordbook;
 using BetterPinyin.Interop.Uia;
 
 namespace BetterPinyin.App;
@@ -35,11 +36,17 @@ internal static class AppServices
     /// <summary>UIA 是否可用，供诊断页展示。</summary>
     public static bool UiaAvailable { get; set; }
 
-    /// <summary>内置读音词库；加载失败时为空词库，匹配器自动降级为放行。</summary>
+    /// <summary>内置读音词库 + 用户词库的组合；加载失败时为空词库，匹配器自动降级为放行。</summary>
     public static IPinyinLexicon Lexicon { get; private set; } = NullPinyinLexicon.Instance;
 
     /// <summary>词库加载失败原因，供诊断页展示。</summary>
     public static string? LexiconError { get; private set; }
+
+    /// <summary>用户词库：采纳云词时自动记忆，也可在词库页增删改。</summary>
+    public static UserWordbook Wordbook { get; private set; } = new();
+
+    /// <summary>用户词库的磁盘存储。</summary>
+    public static WordbookStore WordbookStorage { get; private set; } = new();
 
     /// <summary>装配共享服务。</summary>
     public static void Initialize()
@@ -47,12 +54,21 @@ internal static class AppServices
         Settings = Store.Load();
 
         var watch = System.Diagnostics.Stopwatch.StartNew();
-        Lexicon = BinaryLexicon.LoadDefault(SyllableTable.Default, out var lexiconError);
+        var builtin = BinaryLexicon.LoadDefault(SyllableTable.Default, out var lexiconError);
         LexiconError = lexiconError;
+
+        Wordbook = WordbookStorage.Load();
+        if (WordbookStorage.LastError is not null)
+        {
+            Log.Write($"用户词库读取失败，已按空词库启动：{WordbookStorage.LastError}");
+        }
+
+        Wordbook.Changed += (_, _) => WordbookStorage.ScheduleSave(Wordbook);
+        Lexicon = new CompositePinyinLexicon(builtin, Wordbook);
         watch.Stop();
 
         Log.Write(Lexicon.IsLoaded
-            ? $"词库已加载：{Lexicon.WordCount} 词，{watch.ElapsedMilliseconds} ms"
+            ? $"词库已加载：内置 {builtin.WordCount} 词 / 用户 {Wordbook.Count} 词，{watch.ElapsedMilliseconds} ms"
             : $"词库未加载（{lexiconError}），读音校验降级为放行");
 
         Uia = new UiaWorker();
@@ -68,10 +84,12 @@ internal static class AppServices
     /// <returns>保存成功返回 true。</returns>
     public static bool SaveSettings() => Store.Save(Settings);
 
-    /// <summary>释放 UIA 线程。</summary>
+    /// <summary>释放 UIA 线程，并把用户词库的挂起改动落盘。</summary>
     public static void Shutdown()
     {
         Controller = null;
+        WordbookStorage.Flush(Wordbook);
+        WordbookStorage.Dispose();
         Uia?.Dispose();
     }
 }

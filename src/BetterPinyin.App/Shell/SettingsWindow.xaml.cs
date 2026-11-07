@@ -65,6 +65,11 @@ public partial class SettingsWindow : FluentWindow, INavigationWindow
         AddPage("关于", "\uE946", typeof(AboutPage), () => new AboutPage(), footer: true);
 
         Loaded += OnLoaded;
+
+        // 键盘钩子是全局的：在设置页里打字会进入组字缓冲，切走之后会带着残留去查询。
+        // 进入/离开设置窗口都收口一次，窗口边界就闭合了。
+        Activated += (_, _) => AppServices.Controller?.DismissInput();
+        Deactivated += (_, _) => AppServices.Controller?.DismissInput();
     }
 
     /// <summary>

@@ -42,7 +42,17 @@ public readonly record struct SuggestionSelectionOptions(
     bool StrictDedupeLocal = true,
     bool ExtendedEnabled = true,
     int ExtendedMaxCount = 3,
-    int MaxExtraSyllables = 4);
+    int MaxExtraSyllables = 4)
+{
+    /// <summary>
+    /// 全部取默认值。
+    /// </summary>
+    /// <remarks>
+    /// 不要写 <c>new SuggestionSelectionOptions()</c>：结构体的无参构造会把所有字段清零，
+    /// 两个开关都会变成关闭。必须用这个属性或显式传参。
+    /// </remarks>
+    public static SuggestionSelectionOptions Default { get; } = new(true, true, true, 3, 4);
+}
 
 /// <summary>
 /// 把清洗后的云端候选分区成「云联想」与「扩展云联想」。
@@ -69,6 +79,10 @@ public static class SuggestionSelector
     /// <param name="localCandidateCount">本地候选个数；未知传 -1。</param>
     /// <param name="localCountKnown">本地候选个数是否可信。</param>
     /// <param name="providerId">来源标识。</param>
+    /// <param name="wordbook">
+    /// 用户词库里与本次输入相关的词。它们只补空位：云端有整词匹配时严格槽仍归云端，
+    /// 云端没有（或断网）时才顶上；扩展槽按顺序追加在云端之后。
+    /// </param>
     /// <returns>分区结果。</returns>
     public static SuggestionSet Select(
         string query,
@@ -78,9 +92,10 @@ public static class SuggestionSelector
         SuggestionSelectionOptions options,
         int localCandidateCount = -1,
         bool localCountKnown = false,
-        string providerId = "bing")
+        string providerId = "bing",
+        IReadOnlyList<string>? wordbook = null)
     {
-        if (candidates.Count == 0)
+        if (candidates.Count == 0 && (wordbook is null || wordbook.Count == 0))
         {
             return SuggestionSet.Empty;
         }
@@ -124,7 +139,30 @@ public static class SuggestionSelector
                     break;
                 }
 
-                strict = Create(text, providerId, i, matches[i]);
+                strict = Create(text, providerId, i, matches[i], query);
+                break;
+            }
+        }
+
+        // 云端没有整词匹配时，用用户词库顶上。这是「断网也能出自己学过的词」的唯一来源。
+        if (options.StrictEnabled && strict is null && wordbook is not null)
+        {
+            for (var i = 0; i < wordbook.Count; i++)
+            {
+                var text = wordbook[i];
+                if (options.StrictDedupeLocal && local.Contains(text))
+                {
+                    strictDeduped = true;
+                    continue;
+                }
+
+                var match = matcher.Match(query, text);
+                if (!match.IsStrict)
+                {
+                    continue;
+                }
+
+                strict = Create(text, WordbookProviderId, i, match, query);
                 break;
             }
         }
@@ -150,7 +188,34 @@ public static class SuggestionSelector
                     continue;
                 }
 
-                extended.Add(Create(text, providerId, i, matches[i]));
+                extended.Add(Create(text, providerId, i, matches[i], query));
+            }
+        }
+
+        // 用户词库补充扩展槽：只在还没填满时追加，且不覆盖云端已有结果。
+        if (options.ExtendedEnabled && wordbook is not null && extended.Count < options.ExtendedMaxCount)
+        {
+            for (var i = 0; i < wordbook.Count && extended.Count < options.ExtendedMaxCount; i++)
+            {
+                var text = wordbook[i];
+                if (strict is not null && string.Equals(text, strict.Text, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                if (local.Contains(text) ||
+                    extended.Exists(e => string.Equals(e.Text, text, StringComparison.Ordinal)))
+                {
+                    continue;
+                }
+
+                var match = matcher.Match(query, text);
+                if (!match.IsExtended || match.ExtraSyllables > options.MaxExtraSyllables)
+                {
+                    continue;
+                }
+
+                extended.Add(Create(text, WordbookProviderId, i, match, query));
             }
         }
 
@@ -158,13 +223,18 @@ public static class SuggestionSelector
         return new SuggestionSet(strict, extended, localCandidateCount, localCountKnown, diagnostic);
     }
 
-    private static CloudSuggestion Create(string text, string providerId, int index, in PinyinMatch match)
+    /// <summary>用户词库来源标识。</summary>
+    public const string WordbookProviderId = "wordbook";
+
+    private static CloudSuggestion Create(string text, string providerId, int index, in PinyinMatch match, string query)
     {
         var rankScore = 1.0 / (1.0 + (index * 0.6));
         var matchScore = match.Kind == PinyinMatchKind.Abbreviation ? 0.9 : 1.0;
         var lengthScore = text.Length >= 3 ? 1.0 : 0.6;
         var score = (0.55 * rankScore) + (0.25 * matchScore) + (0.20 * lengthScore);
-        return new CloudSuggestion(text, providerId, index, Math.Round(score, 4));
+
+        // Reading 记的是本次实际请求的拼音串：学进词库时要的是全拼，不是原始简拼。
+        return new CloudSuggestion(text, providerId, index, Math.Round(score, 4), query);
     }
 
     private static string BuildDiagnostic(

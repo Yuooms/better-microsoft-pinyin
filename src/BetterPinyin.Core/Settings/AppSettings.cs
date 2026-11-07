@@ -42,6 +42,21 @@ public sealed class AppSettings
     /// <summary>浮窗样式：<c>Card</c> 纯白卡片，<c>Acrylic</c> 亚克力。</summary>
     public string PopupStyle { get; set; } = "Card";
 
+    /// <summary>是否把用户词库的命中显示在浮窗里。</summary>
+    public bool WordbookEnabled { get; set; } = true;
+
+    /// <summary>采纳云联想后是否自动记入用户词库。</summary>
+    public bool WordbookLearnOnAccept { get; set; } = true;
+
+    /// <summary>用户词库整词命中时是否跳过联网，直接出词。</summary>
+    public bool WordbookLocalFirst { get; set; } = true;
+
+    /// <summary>是否在键盘空闲时自动把待同步的词写入微软拼音自定义短语。</summary>
+    public bool WordbookAutoSync { get; set; }
+
+    /// <summary>写入微软拼音时的默认候选位置（1~9）。</summary>
+    public int WordbookSyncPosition { get; set; } = 2;
+
     /// <summary>配色主题：<c>System</c> 跟随系统，<c>Light</c> 浅色，<c>Dark</c> 深色。</summary>
     public string ThemeMode { get; set; } = "System";
 
