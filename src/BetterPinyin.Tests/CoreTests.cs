@@ -166,6 +166,15 @@ internal static class CoreTests
             Check.Equal(2, read[0].Position, "位置往返");
             Check.Equal("伊斯塔露", read[0].Text, "文本往返");
 
+            // 记录头的字节布局是实测验证过的：位置是偏移 6 的 u32，偏移 10 固定 0x0006。
+            // 这两处写错会让输入法整条忽略（短语不出现），所以锁死。
+            var raw = File.ReadAllBytes(Path.Combine(directory, "test.lex"));
+            Check.Equal("mschxudp", System.Text.Encoding.ASCII.GetString(raw, 0, 8), "文件魔数");
+            Check.Equal(1, BitConverter.ToInt32(raw, 0x1C), "头部短语计数");
+            Check.Equal((ushort)0x0010, BitConverter.ToUInt16(raw, 0x44), "记录头起始标记");
+            Check.Equal(2, BitConverter.ToInt32(raw, 0x44 + 6), "位置在记录头偏移 6");
+            Check.Equal((ushort)0x0006, BitConverter.ToUInt16(raw, 0x44 + 10), "记录头偏移 10 固定为 0x0006");
+
             udp.Merge(new[] { new MspyPhrase("ystl", 2, "伊斯塔露") }, false, out _);
             Check.Equal(2, udp.Read(out _).Count, "合并不丢已有条目");
 

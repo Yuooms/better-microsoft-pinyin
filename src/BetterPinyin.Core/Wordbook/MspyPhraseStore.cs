@@ -5,7 +5,10 @@ namespace BetterPinyin.Core.Wordbook;
 
 /// <summary>微软拼音自定义短语里的一条记录。</summary>
 /// <param name="Pinyin">触发拼音，小写、无空格。</param>
-/// <param name="Position">候选位置 1~9。</param>
+/// <param name="Position">
+/// 候选位置 1~9。会原样写入文件，但实测输入法不按它排序（统一排在候选第 1 位），
+/// 目前只作记录与将来兼容用途。
+/// </param>
 /// <param name="Text">输出文本。</param>
 public readonly record struct MspyPhrase(string Pinyin, int Position, string Text);
 
@@ -32,6 +35,16 @@ public readonly record struct MspyPhrase(string Pinyin, int Position, string Tex
 /// <para>
 /// 因此这里的策略是「最小改动」：只改 0x14/0x18/0x1C 三个计数与记录区，
 /// 0x00~0x43 的其它字节（含每台机器不同的字段）原样写回。任何格式不符一律拒绝写入。
+/// </para>
+/// <para>
+/// 实测结论（Windows 10 19045 / 微软拼音，写入后逐条读候选窗验证）：
+/// <list type="bullet">
+/// <item>写完**不需要重启输入法**，几秒内自动重载并出现在原生候选里；</item>
+/// <item>输入法**不会回写覆盖**该文件，外部写入能稳定保留；</item>
+/// <item>记录里的「位置」字段会被正常保存，但输入法**不按它排序**——
+/// 自定义短语一律排在原生候选第 1 位，填 2~9 与填 1 效果相同。
+/// 因此 <see cref="MspyPhrase.Position"/> 目前只作记录用途。</item>
+/// </list>
 /// </para>
 /// </remarks>
 public sealed class MspyPhraseStore
@@ -253,9 +266,11 @@ public sealed class MspyPhraseStore
             .ToList();
 
         byte[] header;
+        byte[] tail;
         try
         {
             header = ReadHeader();
+            tail = ReadTail();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -293,7 +308,7 @@ public sealed class MspyPhraseStore
 
         foreach (var phrase in list)
         {
-            writer.Write(BuildRecord(phrase));
+            writer.Write(BuildRecord(phrase, tail));
         }
 
         var total = (int)stream.Length;
@@ -353,7 +368,7 @@ public sealed class MspyPhraseStore
         return header;
     }
 
-    private static byte[] BuildRecord(MspyPhrase phrase)
+    private static byte[] BuildRecord(MspyPhrase phrase, byte[] tail)
     {
         var pinyin = Encoding.Unicode.GetBytes(phrase.Pinyin);
         var text = Encoding.Unicode.GetBytes(phrase.Text);
@@ -367,14 +382,52 @@ public sealed class MspyPhraseStore
         writer.Write((uint)Math.Clamp(phrase.Position, 1, 9));
         writer.Write((ushort)0x0006);
         writer.Write((ushort)0x0000);
-        writer.Write((byte)0);
-        writer.Write((byte)0);
+        // 记录头最后两字节是文件级尾标记，输入法原样带上并沿用。
+        // 写成 0 也能被读到，但和系统自己写的文件不一致，保守起见照抄。
+        writer.Write(tail[0]);
+        writer.Write(tail[1]);
         writer.Write(pinyin);
         writer.Write(Separator);
         writer.Write(text);
         writer.Write(Separator);
 
         return stream.ToArray();
+    }
+
+    /// <summary>读出文件级尾标记；没有任何记录时用输入法的默认值。</summary>
+    private byte[] ReadTail()
+    {
+        var fallback = new byte[] { 0xA5, 0x2C };
+        if (!File.Exists(FilePath))
+        {
+            return fallback;
+        }
+
+        byte[] data;
+        try
+        {
+            data = File.ReadAllBytes(FilePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return fallback;
+        }
+
+        if (data.Length < HeaderLength + RecordHeaderLength)
+        {
+            return fallback;
+        }
+
+        var count = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(0x1C, 4));
+        if (count <= 0 || count > 10_000)
+        {
+            return fallback;
+        }
+
+        var recordsStart = HeaderLength + ((count - 1) * 4);
+        return recordsStart + RecordHeaderLength <= data.Length
+            ? new[] { data[recordsStart + 14], data[recordsStart + 15] }
+            : fallback;
     }
 
     private bool Backup()

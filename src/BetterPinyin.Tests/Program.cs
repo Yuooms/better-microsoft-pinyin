@@ -32,6 +32,11 @@ internal static class Program
             return 0;
         }
 
+        if (args.Any(a => a.Equals("--udp", StringComparison.OrdinalIgnoreCase)))
+        {
+            return UdpSpike.Run(args);
+        }
+
         try
         {
             CoreTests.RunAll();

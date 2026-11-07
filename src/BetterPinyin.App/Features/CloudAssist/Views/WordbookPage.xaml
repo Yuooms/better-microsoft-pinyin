@@ -24,7 +24,7 @@
             <fl:TextBlock FontTypography="Caption"
                           TextWrapping="Wrap"
                           Margin="0,4,0,0"
-                          Text="采纳过的云词会自动记到这里。内置词库只读，调权重与遗忘写在本程序的覆盖层；「同步」会把词写进微软拼音的自定义短语，切换一次输入法后生效。" />
+                          Text="采纳过的云词会自动记到这里。内置词库只读，调权重与遗忘写在本程序的覆盖层；「同步」会把词写进微软拼音的自定义短语，几秒后自动生效。" />
 
             <Grid Margin="0,16,0,0">
                 <Grid.ColumnDefinitions>
@@ -181,6 +181,13 @@
                            MaxWidth="460"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
             </StackPanel>
+
+            <!-- 实测结论：位置值会写入文件，但这版输入法不按它排序，统一排在候选第 1 位。 -->
+            <TextBlock Margin="0,8,0,0"
+                       TextWrapping="Wrap"
+                       MaxWidth="1100"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       Text="同步只写文件、不动输入法进程，几秒后自动生效。实测 Windows 10 19045 上微软拼音会把自定义短语统一排在原生候选第 1 位，「位置」值暂时不生效。" />
         </StackPanel>
     </Grid>
 </Page>

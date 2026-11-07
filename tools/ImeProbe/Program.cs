@@ -46,9 +46,15 @@ internal static class Program
             ? "[UIA] 初始化成功"
             : "[UIA] 初始化失败，后续将无法读取候选窗");
 
-        if (args.Any(a => a.Equals("--activate-app", StringComparison.OrdinalIgnoreCase)))
+        var hotkeyArg = args.FirstOrDefault(a =>
+            a.StartsWith("--hotkey=", StringComparison.OrdinalIgnoreCase));
+        if (hotkeyArg is not null)
         {
-            var process = System.Diagnostics.Process
+            return SendHotkey(hotkeyArg["--hotkey=".Length..]);
+        }
+
+        if (args.Any(a => a.Equals("--activate-app", StringComparison.OrdinalIgnoreCase)))
+        {            var process = System.Diagnostics.Process
                 .GetProcessesByName("BetterMicrosoftPinyin")
                 .FirstOrDefault();
             if (process is null || process.MainWindowHandle == IntPtr.Zero)
@@ -209,8 +215,7 @@ internal static class Program
         }
 
         _tracker = new CompositionTracker();
-        _tracker.CompositionChanged += (_, e) => LogQueue.Enqueue($"[拼音] {e.RawInput}");
-        _tracker.CompositionEnded += (_, e) => LogQueue.Enqueue($"[组字结束] 原因={e.Reason}");
+        _tracker.CompositionChanged += (_, e) => LogQueue.Enqueue($"[拼音] {e.RawInput}");        _tracker.CompositionEnded += (_, e) => LogQueue.Enqueue($"[组字结束] 原因={e.Reason}");
 
         _hook = new LowLevelKeyboardHook();
         _hook.KeyEvent += OnKeyEvent;
@@ -430,5 +435,51 @@ internal static class Program
             NativeMethods.TranslateMessage(ref message);
             NativeMethods.DispatchMessage(ref message);
         }
+    }
+
+    /// <summary>
+    /// 按住若干虚拟键再逆序释放，用于模拟 Win+Space 这类组合键。
+    /// </summary>
+    /// <param name="spec">逗号分隔的十六进制虚拟键码，例如 <c>5B,20</c>。</param>
+    /// <returns>进程退出码。</returns>
+    /// <remarks>
+    /// 单独存在的原因是：需要「切换输入法 / 让输入法重新加载」时，
+    /// 用 SendInput 发组合键比手工按键盘更适合放进可重复执行的脚本。
+    /// </remarks>
+    private static int SendHotkey(string spec)
+    {
+        var keys = new List<ushort>(4);
+        foreach (var token in spec.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (!ushort.TryParse(token, System.Globalization.NumberStyles.HexNumber,
+                    System.Globalization.CultureInfo.InvariantCulture, out var virtualKey))
+            {
+                Console.WriteLine($"[组合键] 无法解析：{token}");
+                return 2;
+            }
+
+            keys.Add(virtualKey);
+        }
+
+        if (keys.Count == 0)
+        {
+            Console.WriteLine("[组合键] 没有按键");
+            return 2;
+        }
+
+        foreach (var key in keys)
+        {
+            KeySender.SendKeyState(key, down: true);
+            Thread.Sleep(30);
+        }
+
+        for (var i = keys.Count - 1; i >= 0; i--)
+        {
+            KeySender.SendKeyState(keys[i], down: false);
+            Thread.Sleep(30);
+        }
+
+        Console.WriteLine($"[组合键] 已发送 {string.Join("+", keys.Select(k => k.ToString("X2")))}");
+        return 0;
     }
 }
