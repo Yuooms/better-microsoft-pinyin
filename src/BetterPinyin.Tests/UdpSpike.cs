@@ -35,6 +35,23 @@ internal static class UdpSpike
             Console.WriteLine($"  [{phrase.Position}] {phrase.Pinyin} → {phrase.Text}");
         }
 
+        var removeIndex = Array.FindIndex(args, a =>
+            a.Equals("--udp-remove", StringComparison.OrdinalIgnoreCase));
+        if (removeIndex >= 0 && removeIndex + 1 < args.Length)
+        {
+            var target = args[removeIndex + 1];
+            var remaining = store.Read(out _)
+                .Where(p => !string.Equals(p.Pinyin, target, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            Console.WriteLine();
+            Console.WriteLine($"删除：{target}（剩余 {remaining.Count} 条）");
+            Console.WriteLine(store.ReplaceAll(remaining)
+                ? "删除成功"
+                : $"删除失败：{store.LastError}");
+            return 0;
+        }
+
         var writeIndex = Array.FindIndex(args, a =>
             a.Equals("--udp-write", StringComparison.OrdinalIgnoreCase));
         if (writeIndex < 0 || writeIndex + 3 >= args.Length)

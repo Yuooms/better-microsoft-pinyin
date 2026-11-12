@@ -41,6 +41,14 @@ internal sealed class CloudAssistController : IDisposable
 {
     private static readonly string[] OwnProcessNames = { "BetterMicrosoftPinyin" };
 
+    /// <summary>设置环境变量 <c>BETTERPINYIN_TRACE_KEYS=1</c> 时把每个按键写进日志。</summary>
+    /// <remarks>
+    /// 用来排查「钩子装了但收不到键」这类问题：从日志能直接看出有没有回调、
+    /// 是不是被当成自身注入、前台窗口是谁。默认关闭，零开销。
+    /// </remarks>
+    private static readonly bool s_traceKeys =
+        Environment.GetEnvironmentVariable("BETTERPINYIN_TRACE_KEYS") == "1";
+
     private readonly AppSettings _settings;
     private readonly BingSuggestionClient _client;
     private readonly LowLevelKeyboardHook _hook = new();
@@ -172,6 +180,12 @@ internal sealed class CloudAssistController : IDisposable
 
     private void OnKeyEvent(object? sender, KeyboardHookEventArgs e)
     {
+        if (s_traceKeys && e.IsKeyDown)
+        {
+            Report($"trace 键 vk=0x{e.VirtualKey:X2} own={e.IsOwnInjection} mod={ReadModifiers()} " +
+                   $"fg=0x{NativeMethods.GetForegroundWindow().ToInt64():X} name={WindowProcess.GetProcessName(NativeMethods.GetForegroundWindow())}");
+        }
+
         // 本程序自己注入的按键（Esc、上屏文本、回填的数字）不参与任何判断。
         if (e.IsOwnInjection)
         {
@@ -280,6 +294,11 @@ internal sealed class CloudAssistController : IDisposable
 
     private void OnCompositionChanged(object? sender, CompositionChangedEventArgs e)
     {
+        if (s_traceKeys)
+        {
+            Report($"trace 组字 \"{e.RawInput}\" v{e.Version}");
+        }
+
         LastQuery = e.RawInput;
 
         // 输入变了，旧映射立刻作废：浮窗还留在屏幕上，但那一刻按采纳键不应再生效。
