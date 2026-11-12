@@ -76,6 +76,8 @@
                     </TextBlock>
                     <TextBlock Style="{StaticResource Hint}" FontSize="13" LineHeight="22" Margin="0,6,0,0"
                                Text="第三方组件（WPF-UI、pinyin-data 等）的版权声明见仓库根目录的 THIRD-PARTY-NOTICES.md。" />
+                    <TextBlock Style="{StaticResource Hint}" FontSize="13" LineHeight="22" Margin="0,6,0,0"
+                               Text="本项目是非官方第三方工具，与 Microsoft Corporation 无隶属关系。" />
                 </StackPanel>
             </Border>
 
