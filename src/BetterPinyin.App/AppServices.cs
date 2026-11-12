@@ -1,9 +1,12 @@
+using System.IO;
+using System.Reflection;
 using BetterPinyin.App.Features.CloudAssist;
 using BetterPinyin.Core.Lexicon;
 using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Settings;
 using BetterPinyin.Core.Wordbook;
 using BetterPinyin.Interop.Ime;
+using BetterPinyin.Interop.Startup;
 using BetterPinyin.Interop.Uia;
 
 namespace BetterPinyin.App;
@@ -55,6 +58,9 @@ internal static class AppServices
     /// <summary>微软拼音自学习词库的读写器（只支持删除，不支持新增）。</summary>
     public static MspyLearningStore Learning { get; } = new();
 
+    /// <summary>当前用户的开机启动登记。</summary>
+    public static StartupRegistration Startup { get; } = CreateStartupRegistration();
+
     /// <summary>串行化短语文件的写入，避免多次采纳并发改同一个文件。</summary>
     private static readonly object PhraseGate = new();
 
@@ -62,6 +68,7 @@ internal static class AppServices
     public static void Initialize()
     {
         Settings = Store.Load();
+        EnsureStartupRegistration();
 
         var watch = System.Diagnostics.Stopwatch.StartNew();
         var builtin = BinaryLexicon.LoadDefault(SyllableTable.Default, out var lexiconError);
@@ -93,6 +100,85 @@ internal static class AppServices
     /// <summary>保存设置到磁盘。</summary>
     /// <returns>保存成功返回 true。</returns>
     public static bool SaveSettings() => Store.Save(Settings);
+
+    /// <summary>
+    /// 启动时校正开机启动登记：配置开着、但命令还指向旧路径（程序被移动或重新发布过）时，
+    /// 按当前进程路径重写一遍。
+    /// </summary>
+    /// <remarks>
+    /// 只在配置为「已开启」时动注册表，绝不擅自把用户没开的功能打开。
+    /// 校验/写入失败只记日志：注册表被组策略锁住时，程序本身仍要能正常启动。
+    /// </remarks>
+    public static void EnsureStartupRegistration()
+    {
+        if (!Settings.StartWithWindows)
+        {
+            return;
+        }
+
+        if (!Startup.TryProbe(out var state, out var probeError))
+        {
+            Log.Write($"读取开机启动项失败：{probeError}");
+            return;
+        }
+
+        if (!state.Registered)
+        {
+            // 启动项被外部工具删掉了：尊重这个结果，不要把用户没开的功能又写回去。
+            Settings.StartWithWindows = false;
+            SaveSettings();
+            Log.Write("开机启动项已不存在，配置同步为关闭");
+            return;
+        }
+
+        if (state.MatchesCurrent)
+        {
+            return;
+        }
+
+        if (Startup.TryEnable(out var enableError))
+        {
+            Log.Write($"开机启动已按当前路径更新：{Startup.Command}");
+        }
+        else
+        {
+            Log.Write($"开机启动登记更新失败：{enableError}");
+        }
+    }
+
+    /// <summary>
+    /// 拼出当前进程的开机启动登记器。
+    /// </summary>
+    /// <remarks>
+    /// 正常双击的是 apphost（<c>BetterMicrosoftPinyin.exe</c>）；用 <c>dotnet BetterPinyin.App.dll</c>
+    /// 调试时 <see cref="Environment.ProcessPath"/> 会变成 <c>dotnet.exe</c>，
+    /// 直接拿它登记会变成「开机启动一个空的 dotnet」，所以优先换回同目录的 apphost。
+    /// </remarks>
+    private static StartupRegistration CreateStartupRegistration()
+    {
+        var path = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(path) ||
+            string.Equals(Path.GetFileName(path), "dotnet.exe", StringComparison.OrdinalIgnoreCase))
+        {
+            var appHost = Path.Combine(AppContext.BaseDirectory, "BetterMicrosoftPinyin.exe");
+            if (File.Exists(appHost))
+            {
+                path = appHost;
+            }
+            else if (Assembly.GetEntryAssembly()?.Location is { Length: > 0 } entry)
+            {
+                // 没有 apphost 时退回 dotnet + 入口 dll，保证开发环境下也能验证。
+                var dotnet = string.IsNullOrEmpty(path)
+                    ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "dotnet.exe")
+                    : path;
+                return new StartupRegistration(dotnet, $"\"{entry}\" --autostart");
+            }
+        }
+
+        // 走到这里仍为空只可能是宿主异常；给一个同目录下的默认名，至少不会让属性初始化抛异常。
+        path ??= Path.Combine(AppContext.BaseDirectory, "BetterMicrosoftPinyin.exe");
+        return new StartupRegistration(path, "--autostart");
+    }
 
     /// <summary>
     /// 把一条已采纳的词写进微软拼音的自定义短语。

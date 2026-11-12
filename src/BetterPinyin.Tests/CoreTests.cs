@@ -5,6 +5,8 @@ using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Ranking;
 using BetterPinyin.Core.Settings;
 using BetterPinyin.Core.Wordbook;
+using BetterPinyin.Interop.Startup;
+using Microsoft.Win32;
 
 namespace BetterPinyin.Tests;
 
@@ -75,17 +77,18 @@ internal static class CoreTests
 {
     public static void RunAll()
     {
-        Run("[1/11] Bing 响应解析", Parser);
-        Run("[2/11] 候选清洗", Sanitizer);
-        Run("[3/11] 拼音匹配", Matcher);
-        Run("[4/11] 严格 / 扩展分区", Selector);
-        Run("[5/11] 排序合并（旧链路）", Ranker);
-        Run("[6/11] 设置持久化", Settings);
-        Run("[7/11] 词库词表", Catalog);
-        Run("[8/11] 用户词库", Wordbook);
-        Run("[9/11] 自学习词库", Learning);
-        Run("[10/11] 自学习词库删除", LearningDelete);
-        Run("[11/11] 自学习词库备份", LearningBackup);
+        Run("[1/12] Bing 响应解析", Parser);
+        Run("[2/12] 候选清洗", Sanitizer);
+        Run("[3/12] 拼音匹配", Matcher);
+        Run("[4/12] 严格 / 扩展分区", Selector);
+        Run("[5/12] 排序合并（旧链路）", Ranker);
+        Run("[6/12] 设置持久化", Settings);
+        Run("[7/12] 词库词表", Catalog);
+        Run("[8/12] 用户词库", Wordbook);
+        Run("[9/12] 自学习词库", Learning);
+        Run("[10/12] 自学习词库删除", LearningDelete);
+        Run("[11/12] 自学习词库备份", LearningBackup);
+        Run("[12/12] 开机启动登记", StartupRegistrationTest);
     }
 
     /// <summary>逐组执行，一组崩掉不影响其它组出结论。</summary>
@@ -486,6 +489,65 @@ internal static class CoreTests
             {
                 Directory.Delete(directory, recursive: true);
             }
+        }
+    }
+
+    /// <summary>
+    /// 开机启动登记：写入、识别旧路径、覆盖、删除，以及拒绝不存在的程序。
+    /// </summary>
+    private static void StartupRegistrationTest()
+    {
+        var keyPath = $@"Software\BetterPinyin.Tests\{Guid.NewGuid():N}";
+        var valueName = "Startup";
+        var current = Environment.ProcessPath!;
+        var other = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.System), "notepad.exe");
+
+        try
+        {
+            Check.Equal(
+                "\"C:\\Program Files\\A B\\x.exe\" --autostart",
+                StartupRegistration.FormatCommand(@"C:\Program Files\A B\x.exe", "--autostart"),
+                "路径带空格时要加引号");
+
+            var registration = new StartupRegistration(current, "--autostart", keyPath, valueName);
+            Check.True(registration.TryProbe(out var initial, out var probeError),
+                $"应能读取启动项：{probeError}");
+            Check.False(initial.Registered, "初始未登记");
+
+            Check.True(registration.TryEnable(out var enableError), $"写入启动项应成功：{enableError}");
+            Check.True(registration.TryProbe(out var enabled, out _), "写入后可读");
+            Check.True(enabled.Registered, "已登记");
+            Check.True(enabled.MatchesCurrent, "命令指向当前程序");
+            Check.Equal($"\"{current}\" --autostart", enabled.Command, "命令内容");
+
+            // 程序换位置：旧命令还在，但已经不匹配；再次 Enable 应该覆盖。
+            var moved = new StartupRegistration(other, "--autostart", keyPath, valueName);
+            Check.True(moved.TryProbe(out var stale, out _), "换路径后可读");
+            Check.True(stale.Registered, "依旧是已登记");
+            Check.False(stale.MatchesCurrent, "旧路径与当前不匹配");
+
+            Check.True(moved.TryEnable(out _), "覆盖为新路径");
+            Check.True(moved.TryProbe(out var updated, out _) && updated.MatchesCurrent, "命令已更新");
+
+            Check.True(moved.TryDisable(out var disableError), $"删除启动项应成功：{disableError}");
+            Check.True(moved.TryProbe(out var disabled, out _), "删除后可读");
+            Check.False(disabled.Registered, "已删除");
+            Check.True(moved.TryDisable(out _), "重复关闭不报错");
+
+            // 不存在的 exe 不应登记，否则每次开机都会静默失败。
+            var missing = new StartupRegistration(
+                Path.Combine(Path.GetTempPath(), $"missing-{Guid.NewGuid():N}.exe"),
+                null,
+                keyPath,
+                valueName);
+            Check.False(missing.TryEnable(out var missingError), "不存在的路径拒绝登记");
+            Check.True(missingError is not null, "拒绝时给出原因");
+        }
+        finally
+        {
+            using var baseKey = RegistryKey.OpenBaseKey(RegistryHive.CurrentUser, RegistryView.Default);
+            baseKey.DeleteSubKeyTree(keyPath, throwOnMissingSubKey: false);
         }
     }
 

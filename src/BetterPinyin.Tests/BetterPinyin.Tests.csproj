@@ -13,6 +13,7 @@
   <ItemGroup>
     <ProjectReference Include="..\BetterPinyin.Core\BetterPinyin.Core.csproj" />
     <ProjectReference Include="..\BetterPinyin.Contracts\BetterPinyin.Contracts.csproj" />
+    <ProjectReference Include="..\BetterPinyin.Interop\BetterPinyin.Interop.csproj" />
   </ItemGroup>
 
 </Project>

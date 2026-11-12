@@ -100,12 +100,17 @@ public partial class App : Application
                 .FirstOrDefault(arg => arg.StartsWith("--page=", StringComparison.OrdinalIgnoreCase))
                 ?["--page=".Length..];
 
+            // 开机启动时不弹设置窗口：正常启动本来就只驻留托盘，
+            // 但首次运行（还没有配置文件）默认会打开设置，自启动必须跳过这一条。
+            var launchedByStartup = e.Args.Any(
+                arg => arg.Equals("--autostart", StringComparison.OrdinalIgnoreCase));
+
             // 诊断入口：把设置窗口渲染成 PNG 后退出，便于在没有截图权限的环境里做界面回归。
             _uiShotPath = e.Args
                 .FirstOrDefault(arg => arg.StartsWith("--ui-shot=", StringComparison.OrdinalIgnoreCase))
                 ?["--ui-shot=".Length..];
 
-            if (!File.Exists(AppServices.Store.FilePath) ||
+            if ((!File.Exists(AppServices.Store.FilePath) && !launchedByStartup) ||
                 e.Args.Any(arg => arg.Equals("--settings", StringComparison.OrdinalIgnoreCase)) ||
                 _startupPage is not null ||
                 _uiShotPath is not null)

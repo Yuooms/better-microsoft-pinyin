@@ -19,7 +19,7 @@ namespace BetterPinyin.App.Shell;
 /// <para>
 /// 左侧导航由 <see cref="IFeatureModule.SettingsPages"/> 推导：
 /// 新增一个功能模块，导航里就自动多一页，不需要改本文件。
-/// 「外观」「网络与环境」「关于」属于外壳，在构造里直接追加。
+/// 「常规」「外观」「网络与环境」「关于」属于外壳，在构造里直接追加。
 /// </para>
 /// <para>
 /// 页面由 <see cref="SettingsPageProvider"/> 缓存。WPF-UI 一旦设了页面提供器，
@@ -60,6 +60,7 @@ public partial class SettingsWindow : FluentWindow, INavigationWindow
             AddPage(page.Title, page.Glyph, page.ViewType, page.CreateView, footer: false);
         }
 
+        AddPage("常规", "\uE713", typeof(GeneralPage), () => new GeneralPage(), footer: false);
         AddPage("外观", "\uE790", typeof(AppearancePage), () => new AppearancePage(), footer: false);
         AddPage("网络与环境", "\uE774", typeof(NetworkPage), () => new NetworkPage(), footer: true);
         AddPage("关于", "\uE946", typeof(AboutPage), () => new AboutPage(), footer: true);
