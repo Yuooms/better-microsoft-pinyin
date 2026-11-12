@@ -314,6 +314,55 @@ internal static class AppServices
         return new LearnedRemovalResult(removed, reloaded, reloadMessage, null);
     }
 
+    /// <summary>从自学习词库备份恢复的结果。</summary>
+    /// <param name="Restored">恢复后的词条数。</param>
+    /// <param name="Reloaded">输入法是否已重新加载词库。</param>
+    /// <param name="ReloadMessage">重新加载的说明或失败原因。</param>
+    /// <param name="Error">写入失败的原因；成功为 null。</param>
+    public sealed record LearnedRestoreResult(int Restored, bool Reloaded, string ReloadMessage, string? Error);
+
+    /// <summary>
+    /// 把自学习词库恢复到某个备份，并让输入法立刻重新加载。
+    /// </summary>
+    /// <param name="backupPath">备份文件路径。</param>
+    /// <param name="window">借用的输入法上下文窗口，要求在前台（备份窗口自己）。</param>
+    /// <returns>恢复结果。</returns>
+    /// <remarks>
+    /// 和删除一样，写文件与让输入法重读必须成对做；恢复前 <see cref="MspyLearningStore.TryRestore"/>
+    /// 会自动把当前状态也备份一份，所以恢复本身可撤。
+    /// </remarks>
+    public static LearnedRestoreResult RestoreLearnedBackup(string backupPath, IntPtr window)
+    {
+        if (!MspyLearningStore.TryReadFile(backupPath, out var expected, out var readError))
+        {
+            return new LearnedRestoreResult(0, false, string.Empty, readError);
+        }
+
+        var restored = 0;
+        var reloaded = false;
+        var reloadMessage = string.Empty;
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            if (!Learning.TryRestore(backupPath, out restored, out var error))
+            {
+                return new LearnedRestoreResult(0, false, string.Empty, error);
+            }
+
+            reloaded = ImeReloader.TryReload(window, out reloadMessage);
+            Thread.Sleep(220);
+
+            if (!Learning.TryRead(out var current, out _) ||
+                MspyLearningStore.Diff(expected, current).IsEmpty)
+            {
+                break; // 文件内容已经与备份一致
+            }
+        }
+
+        Log.Write($"自学习词库从备份恢复 {restored} 条，重新加载：{(reloaded ? "成功" : reloadMessage)}");
+        return new LearnedRestoreResult(restored, reloaded, reloadMessage, null);
+    }
+
     /// <summary>释放 UIA 线程，并把用户词库的挂起改动落盘。</summary>
     public static void Shutdown()
     {

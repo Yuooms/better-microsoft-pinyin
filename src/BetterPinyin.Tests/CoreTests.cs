@@ -75,16 +75,17 @@ internal static class CoreTests
 {
     public static void RunAll()
     {
-        Run("[1/10] Bing 响应解析", Parser);
-        Run("[2/10] 候选清洗", Sanitizer);
-        Run("[3/10] 拼音匹配", Matcher);
-        Run("[4/10] 严格 / 扩展分区", Selector);
-        Run("[5/10] 排序合并（旧链路）", Ranker);
-        Run("[6/10] 设置持久化", Settings);
-        Run("[7/10] 词库词表", Catalog);
-        Run("[8/10] 用户词库", Wordbook);
-        Run("[9/10] 自学习词库", Learning);
-        Run("[10/10] 自学习词库删除", LearningDelete);
+        Run("[1/11] Bing 响应解析", Parser);
+        Run("[2/11] 候选清洗", Sanitizer);
+        Run("[3/11] 拼音匹配", Matcher);
+        Run("[4/11] 严格 / 扩展分区", Selector);
+        Run("[5/11] 排序合并（旧链路）", Ranker);
+        Run("[6/11] 设置持久化", Settings);
+        Run("[7/11] 词库词表", Catalog);
+        Run("[8/11] 用户词库", Wordbook);
+        Run("[9/11] 自学习词库", Learning);
+        Run("[10/11] 自学习词库删除", LearningDelete);
+        Run("[11/11] 自学习词库备份", LearningBackup);
     }
 
     /// <summary>逐组执行，一组崩掉不影响其它组出结论。</summary>
@@ -478,6 +479,80 @@ internal static class CoreTests
                 new MspyLearningStore(broken, backupDirectory).TryRemove(new[] { "伊斯塔露" }, out _, out var brokenError),
                 "记录数越界应拒绝删除");
             Check.True(brokenError is not null, "拒绝时应给出原因");
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 自学习词库的备份：列表、差异、恢复、删除，以及长度不同的恢复。
+    /// </summary>
+    private static void LearningBackup()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"bp-learn-bak-{Guid.NewGuid():N}");
+        var path = Path.Combine(directory, "ChsPinyinUDL.dat");
+        var backupDirectory = Path.Combine(directory, "backup");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var original = BuildLearningFile(
+                ("伊斯塔露", "yst", 4),
+                ("若娜瓦", "rnw", 3),
+                ("多余词", "dyc", 3));
+            File.WriteAllBytes(path, original);
+
+            // 备份文件名才是备份时刻：文件复制会连源文件的修改时间一起带过来，
+            // 这里故意把源文件改成 3 天前，若按 mtime 解析就会露馅。
+            File.SetLastWriteTime(path, DateTime.Now.AddDays(-3));
+
+            var store = new MspyLearningStore(path, backupDirectory);
+            Check.True(store.TryRemove(new[] { "若娜瓦" }, out var removed, out _), "删除应成功");
+            Check.Equal(1, removed, "删掉 1 条");
+
+            var backups = store.ListBackups();
+            Check.Equal(1, backups.Count, "应有一份备份");
+            Check.Equal(3, backups[0].WordCount, "备份里是删除前的 3 条");
+            Check.Equal(DateTimeOffset.Now.Date, backups[0].CreatedAt.Date, "备份时间是今天");
+
+            Check.True(MspyLearningStore.TryReadFile(backups[0].FilePath, out var backupWords, out _), "备份可读");
+            Check.True(store.TryRead(out var current, out _), "当前可读");
+
+            var diff = MspyLearningStore.Diff(backupWords, current);
+            Check.Equal(1, diff.Missing.Count, "恢复会回来 1 条");
+            Check.Equal("若娜瓦", diff.Missing[0], "回来的词");
+            Check.Equal(0, diff.Extra.Count, "没有会消失的词");
+            Check.False(diff.IsEmpty, "两份词库存在差异");
+            Check.True(MspyLearningStore.Diff(backupWords, backupWords).IsEmpty, "同一份词库无差异");
+
+            // 恢复：内容回到 3 条；恢复前会把「2 条」的现状也留一份。
+            Check.True(store.TryRestore(backups[0].FilePath, out var restored, out var restoreError),
+                $"恢复应成功：{restoreError}");
+            Check.Equal(3, restored, "恢复后 3 条");
+            Check.True(store.TryRead(out var afterRestore, out _), "恢复后可读");
+            Check.True(afterRestore.Any(w => w.Text == "若娜瓦"), "被删的词回来了");
+
+            var preRestore = store.ListBackups().FirstOrDefault(b => b.WordCount == 2);
+            Check.True(preRestore is not null, "恢复前又备份了一份 2 条的现状");
+
+            // 删除备份；备份目录外的文件一律拒绝。
+            Check.True(store.TryDeleteBackup(preRestore!.FilePath, out var deleteError), $"删除备份应成功：{deleteError}");
+            Check.False(File.Exists(preRestore.FilePath), "备份文件已删除");
+            Check.False(store.TryDeleteBackup(path, out var outsideError), "不允许删除备份目录外的文件");
+            Check.True(outsideError is not null, "拒绝时给出原因");
+
+            // 长度不同的备份也要能恢复：先换成 1 条的文件，再恢复 3 条的备份。
+            var shrink = BuildLearningFile(("伊斯塔露", "yst", 4));
+            File.WriteAllBytes(path, shrink);
+            Check.True(store.TryRestore(backups[0].FilePath, out var again, out var lengthError),
+                $"长度不同的恢复应成功：{lengthError}");
+            Check.Equal(3, again, "恢复 3 条");
+            Check.Equal(original.Length, new FileInfo(path).Length, "文件长度回到备份大小");
+            Check.True(File.ReadAllBytes(path).SequenceEqual(original), "内容与备份完全一致");
         }
         finally
         {

@@ -246,6 +246,7 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
                     <fl:Button Content="刷新" Click="OnLearningRefreshClick" />
                     <fl:Button Content="导出 CSV" Margin="8,0,0,0" Click="OnLearningExportClick" />
+                    <fl:Button Content="备份…" Margin="8,0,0,0" Click="OnLearningBackupClick" />
                     <fl:Button x:Name="LearningDeleteButton"
                                Content="删除选中"
                                Appearance="Danger"
