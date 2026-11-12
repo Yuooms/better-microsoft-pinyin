@@ -42,6 +42,9 @@ public partial class LearningBackupWindow : Wpf.Ui.Controls.FluentWindow
     /// <summary>本次打开是否真的改过词库（恢复或删备份），关闭后调用方据此刷新列表。</summary>
     public bool Changed { get; private set; }
 
+    /// <summary>最后一次操作的结果说明，关窗后由调用方显示在词库页上。</summary>
+    public string? LastStatus { get; private set; }
+
     // ── 加载与预览 ────────────────────────────────────────────
 
     private void Reload()
@@ -133,7 +136,7 @@ public partial class LearningBackupWindow : Wpf.Ui.Controls.FluentWindow
             return;
         }
 
-        StatusText.Text = "正在恢复…";
+        SetStatus("正在恢复…");
         UpdateLayout();
 
         var result = AppServices.RestoreLearnedBackup(row.Path, GetWindowHandle());
@@ -141,16 +144,16 @@ public partial class LearningBackupWindow : Wpf.Ui.Controls.FluentWindow
 
         if (result.Error is not null)
         {
-            StatusText.Text = $"恢复失败：{result.Error}";
+            SetStatus($"恢复失败：{result.Error}");
             Reload();
             return;
         }
 
         Reload();
-        StatusText.Text = result.Reloaded
+        SetStatus(result.Reloaded
             ? $"已恢复到 {row.Time} 的 {result.Restored} 条，{result.ReloadMessage}打拼音就能看到差别。"
             : $"已恢复到 {row.Time} 的 {result.Restored} 条，但没能让输入法重新加载：{result.ReloadMessage}"
-            + "改动可能会被输入法覆盖，建议注销后重新登录再试。";
+            + "改动可能会被输入法覆盖，建议注销后重新登录再试。");
     }
 
     private void OnDeleteClick(object sender, RoutedEventArgs e)
@@ -169,13 +172,13 @@ public partial class LearningBackupWindow : Wpf.Ui.Controls.FluentWindow
 
         if (!AppServices.Learning.TryDeleteBackup(row.Path, out var error))
         {
-            StatusText.Text = $"删除失败：{error}";
+            SetStatus($"删除失败：{error}");
             return;
         }
 
         Changed = true;
         Reload();
-        StatusText.Text = $"已删除 {row.Time} 的备份。";
+        SetStatus($"已删除 {row.Time} 的备份。");
     }
 
     private void OnCloseClick(object sender, RoutedEventArgs e) => Close();
@@ -183,6 +186,13 @@ public partial class LearningBackupWindow : Wpf.Ui.Controls.FluentWindow
     // ── 辅助 ──────────────────────────────────────────────────
 
     private IntPtr GetWindowHandle() => new WindowInteropHelper(this).Handle;
+
+    /// <summary>更新状态栏，同时留给调用方一份。</summary>
+    private void SetStatus(string text)
+    {
+        StatusText.Text = text;
+        LastStatus = text;
+    }
 
     private bool Confirm(string message, string title)
     {

@@ -106,7 +106,6 @@ public partial class WordbookPage : Page
         _loading = false;
 
         Reload();
-
     }
 
     // ── 两个视图 ──────────────────────────────────────────────
@@ -213,11 +212,11 @@ public partial class WordbookPage : Page
 
         dialog.ShowDialog();
 
-        // 恢复过备份就重新读一次，词条数和列表都跟着变。
+        // 恢复过备份就重新读一次，词条数和列表都跟着变；结果说明沿用窗口里的原话。
         if (dialog.Changed)
         {
             LoadLearning();
-            LearningStatusText.Text = "自学习词库已更新，输入法已重新加载。";
+            LearningStatusText.Text = dialog.LastStatus ?? "自学习词库已更新。";
         }
     }
 
