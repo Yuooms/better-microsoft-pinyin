@@ -238,9 +238,16 @@ public sealed class MspyPhraseStore
     /// <returns>成功返回 true。</returns>
     public bool ReplaceAll(IEnumerable<MspyPhrase> phrases) => Write(phrases);
 
-    /// <summary>导出成系统设置可导入的 TXT（每行「拼音 TAB 短语」）。</summary>    /// <param name="path">目标路径。</param>
+    /// <summary>导出成系统设置可导入的 TXT（每行「拼音 TAB 短语」）。</summary>
+    /// <param name="path">目标路径。</param>
     /// <returns>成功返回 true。</returns>
-    public bool ExportText(string path)
+    public bool ExportText(string path) => ExportText(path, null);
+
+    /// <summary>导出成 TXT，可只导出部分记录（例如跳过自动补出来的简拼）。</summary>
+    /// <param name="path">目标路径。</param>
+    /// <param name="filter">筛选条件；传 null 导出全部。</param>
+    /// <returns>成功返回 true。</returns>
+    public bool ExportText(string path, Func<MspyPhrase, bool>? filter)
     {
         var phrases = Read(out var error);
         if (error is not null)
@@ -251,7 +258,9 @@ public sealed class MspyPhraseStore
 
         try
         {
-            var lines = phrases.Select(p => $"{p.Pinyin}\t{p.Text}");
+            var lines = phrases
+                .Where(filter ?? (_ => true))
+                .Select(p => $"{p.Pinyin}\t{p.Text}");
             File.WriteAllLines(path, lines, new UTF8Encoding(false));
             return true;
         }

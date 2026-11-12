@@ -68,6 +68,11 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
         {
             _ = Task.Run(AppServices.SyncPendingPhrases);
         }
+        else if (_settings.PhraseWriteInitials)
+        {
+            // 短语库是升级前写的，只有全拼；补一遍简拼，打首字母才出得来。
+            _ = Task.Run(AppServices.BackfillInitialPhrases);
+        }
 
         return Task.CompletedTask;
     }

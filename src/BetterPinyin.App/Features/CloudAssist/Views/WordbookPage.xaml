@@ -57,6 +57,12 @@
                                  Unchecked="OnToggleChanged" />
                 <fl:ToggleSwitch x:Name="LocalFirstToggle"
                                  Content="本地命中不联网"
+                                 Margin="0,0,24,0"
+                                 Checked="OnToggleChanged"
+                                 Unchecked="OnToggleChanged" />
+                <fl:ToggleSwitch x:Name="InitialsToggle"
+                                 Content="同时写入简拼"
+                                 ToolTip="再写一条首字母记录，打 ystl 也能出「伊斯塔露」"
                                  Checked="OnToggleChanged"
                                  Unchecked="OnToggleChanged" />
             </StackPanel>
@@ -121,7 +127,7 @@
                                 </Grid.ColumnDefinitions>
 
                                 <TextBlock Grid.Column="0"
-                                           Text="{Binding Pinyin}"
+                                           Text="{Binding Code}"
                                            VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                            TextTrimming="CharacterEllipsis" />
@@ -189,7 +195,7 @@
                            TextWrapping="Wrap"
                            MaxWidth="1100"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                           Text="实测：写入不需要重启输入法，几秒后自动生效；输入法会把自定义短语排在原生候选第 1 位，「位置」值会被保存但当前版本不影响排序。" />
+                           Text="实测：写入不需要重启输入法，几秒后自动生效；输入法会把自定义短语排在原生候选第 1 位，「位置」值会被保存但当前版本不影响排序。开启「同时写入简拼」后，每条短语会再写一条首字母记录，打 ystl 也能出「伊斯塔露」。" />
             </StackPanel>
         </Grid>
 

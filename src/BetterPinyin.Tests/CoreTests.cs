@@ -185,6 +185,28 @@ internal static class CoreTests
 
             udp.Merge(new[] { new MspyPhrase("ystl", 4, "伊斯塔露") }, false, out _);
             Check.Equal(4, udp.Read(out _).First(p => p.Pinyin == "ystl").Position, "同文本可更新位置");
+
+            // 简拼变体：输入法只按拼音做字符串匹配，简拼必须单独写一条。
+            Check.Equal("ystl", PhraseVariants.InitialsOf("yisitalu"), "全拼转简拼");
+            Check.Equal("zg", PhraseVariants.InitialsOf("zhongguo"), "两字词简拼");
+
+            // 触发码必须保持原字母：这里若走简拼索引的模糊音归一，会变成 hls / wyls，
+            // 用户按 fns 反而打不出来。
+            Check.Equal("fns", PhraseVariants.InitialsOf("faniesi"), "f 不应被归一成 h");
+            Check.Equal("wyns", PhraseVariants.InitialsOf("woyanisha"), "n 不应被归一成 l");
+            Check.True(PhraseVariants.InitialsOf("wo") is null, "单音节不值得补简拼");
+            Check.True(PhraseVariants.InitialsOf("xyz") is null, "切不出音节时不补");
+
+            var pair = PhraseVariants.Expand(
+                new MspyPhrase("yisitalu", 2, "伊斯塔露"),
+                withInitials: true);
+            Check.Equal(2, pair.Count, "展开为两条");
+            Check.Equal("ystl", pair[1].Pinyin, "第二条是简拼");
+            Check.Equal("伊斯塔露", pair[1].Text, "两条文本一致");
+            Check.Equal(
+                1,
+                PhraseVariants.Expand(new MspyPhrase("yisitalu", 2, "伊斯塔露"), withInitials: false).Count,
+                "关闭时只写全拼");
         }
         finally
         {

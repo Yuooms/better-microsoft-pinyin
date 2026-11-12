@@ -41,8 +41,9 @@ public partial class WordbookPage : Page
     private IReadOnlyList<MspyLearnedWord> _learnedWords = Array.Empty<MspyLearnedWord>();
 
     private bool _initialized;
+    private bool _loading;
     private EditMode _mode = EditMode.None;
-    private string? _editingPinyin;
+    private PhraseRow? _editingRow;
 
     /// <summary>编辑面板当前是新增还是修改。</summary>
     private enum EditMode
@@ -89,8 +90,15 @@ public partial class WordbookPage : Page
         }
 
         _initialized = true;
+
+        // 赋值会触发 Checked/Unchecked；这里必须挡住，否则三个开关会互相把对方的
+        // 默认值写回配置（新加的键第一次打开时就被改成 false）。
+        _loading = true;
         AutoWriteToggle.IsChecked = AppServices.Settings.PhraseAutoWrite;
         LocalFirstToggle.IsChecked = AppServices.Settings.WordbookLocalFirst;
+        InitialsToggle.IsChecked = AppServices.Settings.PhraseWriteInitials;
+        _loading = false;
+
         Reload();
     }
 
@@ -208,16 +216,44 @@ public partial class WordbookPage : Page
         var learned = AppServices.Wordbook.Words
             .Select(w => (w.Pinyin, w.Text))
             .ToHashSet();
+        var variants = FindInitialVariants(phrases);
+        var codes = phrases.Select(p => (p.Text, p.Pinyin)).ToHashSet();
 
         _rows.Clear();
         foreach (var phrase in phrases.OrderBy(p => p.Pinyin, StringComparer.Ordinal))
         {
+            if (variants.Contains((phrase.Text, phrase.Pinyin)))
+            {
+                continue; // 简拼记录由全拼那一行代表，不单独显示
+            }
+
+            var initials = PhraseVariants.InitialsOf(phrase.Pinyin);
+            var shown = initials is not null && codes.Contains((phrase.Text, initials)) ? initials : string.Empty;
             var source = learned.Contains((phrase.Pinyin, phrase.Text)) ? "学习" : "手动";
-            _rows.Add(new PhraseRow(phrase.Pinyin, phrase.Text, source, phrase.Position));
+            _rows.Add(new PhraseRow(phrase.Pinyin, phrase.Text, source, phrase.Position, shown));
         }
 
         ApplyFilter();
         UpdateStatus(error);
+    }
+
+    /// <summary>
+    /// 找出「自动补出来的简拼记录」：同一文本、拼音等于另一条记录的简拼。
+    /// </summary>
+    private static HashSet<(string Text, string Pinyin)> FindInitialVariants(IReadOnlyList<MspyPhrase> phrases)
+    {
+        var codes = phrases.Select(p => (p.Text, p.Pinyin)).ToHashSet();
+        var variants = new HashSet<(string Text, string Pinyin)>();
+        foreach (var phrase in phrases)
+        {
+            var initials = PhraseVariants.InitialsOf(phrase.Pinyin);
+            if (initials is not null && codes.Contains((phrase.Text, initials)))
+            {
+                variants.Add((phrase.Text, initials));
+            }
+        }
+
+        return variants;
     }
 
     private void ApplyFilter()
@@ -254,14 +290,27 @@ public partial class WordbookPage : Page
 
     private void OnToggleChanged(object sender, RoutedEventArgs e)
     {
-        if (!_initialized)
+        if (!_initialized || _loading)
         {
             return;
         }
 
         AppServices.Settings.PhraseAutoWrite = AutoWriteToggle.IsChecked == true;
         AppServices.Settings.WordbookLocalFirst = LocalFirstToggle.IsChecked == true;
+
+        var initialsWas = AppServices.Settings.PhraseWriteInitials;
+        AppServices.Settings.PhraseWriteInitials = InitialsToggle.IsChecked == true;
         AppServices.SaveSettings();
+
+        // 刚打开「同时写入简拼」时，把已有的短语补一遍，不用等下次采纳。
+        if (!initialsWas && AppServices.Settings.PhraseWriteInitials)
+        {
+            var count = AppServices.BackfillInitialPhrases();
+            Reload();
+            StatusText.Text = count > 0
+                ? $"已为 {count} 条短语补写简拼，现在打首字母也能出词。"
+                : "现有短语都已经有简拼记录。";
+        }
     }
 
     private void OnAddClick(object sender, RoutedEventArgs e) => ShowEditor(EditMode.Add, null);
@@ -277,7 +326,7 @@ public partial class WordbookPage : Page
     private void ShowEditor(EditMode mode, PhraseRow? row)
     {
         _mode = mode;
-        _editingPinyin = row?.Pinyin;
+        _editingRow = row;
         EditPinyinBox.Text = row?.Pinyin ?? string.Empty;
         EditTextBox.Text = row?.Text ?? string.Empty;
         EditConfirmButton.Content = mode == EditMode.Update ? "保存" : "添加";
@@ -293,7 +342,7 @@ public partial class WordbookPage : Page
     private void OnEditCancelClick(object sender, RoutedEventArgs e)
     {
         _mode = EditMode.None;
-        _editingPinyin = null;
+        _editingRow = null;
         EditPanel.Visibility = Visibility.Collapsed;
     }
 
@@ -316,26 +365,41 @@ public partial class WordbookPage : Page
 
         var phrases = AppServices.Phrases.Read(out _).ToList();
 
-        // 改拼音等于换一条记录：先把旧的删掉，避免留下死条目。
-        if (_mode == EditMode.Update && _editingPinyin is not null &&
-            !string.Equals(_editingPinyin, pinyin, StringComparison.OrdinalIgnoreCase))
+        // 改拼音等于换一条记录：先把旧的（连同它的简拼）删掉，避免留下死条目。
+        if (_mode == EditMode.Update && _editingRow is not null)
         {
-            phrases.RemoveAll(p => string.Equals(p.Pinyin, _editingPinyin, StringComparison.OrdinalIgnoreCase));
+            phrases.RemoveAll(p => SameCode(p, _editingRow.Pinyin));
+            if (_editingRow.Initials.Length > 0)
+            {
+                phrases.RemoveAll(p => SameCode(p, _editingRow.Initials));
+            }
         }
 
-        var existing = phrases.FindIndex(p => string.Equals(p.Pinyin, pinyin, StringComparison.OrdinalIgnoreCase));
         var position = EditPositionBox.SelectedItem is ComboBoxItem { Tag: int value }
             ? value
             : Math.Clamp(AppServices.Settings.WordbookSyncPosition, 1, 9);
 
-        var phrase = new MspyPhrase(pinyin, position, text);
-        if (existing >= 0)
+        phrases.RemoveAll(p => SameCode(p, pinyin));
+        phrases.Add(new MspyPhrase(pinyin, position, text));
+
+        // 再补一条简拼记录，让首字母也能打出来；简拼被别的词占了就不写。
+        var note = string.Empty;
+        var initials = AppServices.Settings.PhraseWriteInitials
+            ? PhraseVariants.InitialsOf(pinyin)
+            : null;
+        if (initials is not null)
         {
-            phrases[existing] = phrase;
-        }
-        else
-        {
-            phrases.Add(phrase);
+            var clash = phrases.FirstOrDefault(p => SameCode(p, initials) &&
+                                                    !string.Equals(p.Text, text, StringComparison.Ordinal));
+            if (clash.Text is not null)
+            {
+                note = $"（简拼 {initials} 已被「{clash.Text}」占用，没有写入简拼）";
+            }
+            else
+            {
+                phrases.RemoveAll(p => SameCode(p, initials));
+                phrases.Add(new MspyPhrase(initials, position, text));
+            }
         }
 
         if (!AppServices.Phrases.ReplaceAll(phrases))
@@ -346,8 +410,12 @@ public partial class WordbookPage : Page
 
         OnEditCancelClick(sender, e);
         Reload();
-        StatusText.Text = $"已保存「{text}」（{pinyin}），几秒后即可在原生候选里看到。";
+        StatusText.Text = $"已保存「{text}」（{pinyin}），几秒后即可在原生候选里看到。{note}";
     }
+
+    /// <summary>两条记录的触发码是否相同（忽略大小写）。</summary>
+    private static bool SameCode(MspyPhrase phrase, string code) =>
+        string.Equals(phrase.Pinyin, code, StringComparison.OrdinalIgnoreCase);
 
     private void OnDeleteClick(object sender, RoutedEventArgs e)
     {
@@ -357,7 +425,8 @@ public partial class WordbookPage : Page
         }
 
         var phrases = AppServices.Phrases.Read(out _)
-            .Where(p => !string.Equals(p.Pinyin, row.Pinyin, StringComparison.OrdinalIgnoreCase))
+            .Where(p => !SameCode(p, row.Pinyin) &&
+                        (row.Initials.Length == 0 || !SameCode(p, row.Initials)))
             .ToList();
 
         if (!AppServices.Phrases.ReplaceAll(phrases))
@@ -421,19 +490,22 @@ public partial class WordbookPage : Page
                 continue;
             }
 
-            var index = phrases.FindIndex(p => string.Equals(p.Pinyin, pinyin, StringComparison.OrdinalIgnoreCase));
+            var index = phrases.FindIndex(p => SameCode(p, pinyin));
             var position = index >= 0
                 ? phrases[index].Position
                 : Math.Clamp(AppServices.Settings.WordbookSyncPosition, 1, 9);
 
-            var phrase = new MspyPhrase(pinyin, position, text);
-            if (index >= 0)
+            phrases.RemoveAll(p => SameCode(p, pinyin));
+            phrases.Add(new MspyPhrase(pinyin, position, text));
+
+            var initials = AppServices.Settings.PhraseWriteInitials
+                ? PhraseVariants.InitialsOf(pinyin)
+                : null;
+            if (initials is not null &&
+                !phrases.Any(p => SameCode(p, initials) && !string.Equals(p.Text, text, StringComparison.Ordinal)))
             {
-                phrases[index] = phrase;
-            }
-            else
-            {
-                phrases.Add(phrase);
+                phrases.RemoveAll(p => SameCode(p, initials));
+                phrases.Add(new MspyPhrase(initials, position, text));
             }
 
             added++;
@@ -469,7 +541,11 @@ public partial class WordbookPage : Page
             return;
         }
 
-        StatusText.Text = AppServices.Phrases.ExportText(dialog.FileName)
+        // 自动补出来的简拼不单独导出，否则文件里同一句话会出现两次。
+        var variants = FindInitialVariants(AppServices.Phrases.Read(out _));
+        StatusText.Text = AppServices.Phrases.ExportText(
+            dialog.FileName,
+            p => !variants.Contains((p.Text, p.Pinyin)))
             ? $"已导出到 {dialog.FileName}"
             : $"导出失败：{AppServices.Phrases.LastError}";
     }

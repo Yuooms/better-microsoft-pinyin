@@ -113,24 +113,79 @@ internal static class AppServices
 
         lock (PhraseGate)
         {
-            var ok = Phrases.Merge(
-                new[] { new MspyPhrase(pinyin, position, text) },
-                overwriteOthers: false,
-                out var conflicts);
+            // 同时补一条简拼记录，否则用户还得打全拼才出得来。
+            var batch = PhraseVariants.Expand(
+                new MspyPhrase(pinyin, position, text),
+                Settings.PhraseWriteInitials);
 
+            var ok = Phrases.Merge(batch, overwriteOthers: false, out var conflicts);
             if (!ok)
             {
                 Log.Write($"写入自定义短语失败：{text}（{pinyin}）— {Phrases.LastError}");
                 return false;
             }
 
-            if (conflicts.Count > 0)
+            foreach (var conflict in conflicts)
             {
-                Log.Write($"自定义短语已有同拼音条目，跳过：{pinyin} → {text}");
-                return false;
+                Log.Write($"自定义短语已有同拼音条目，跳过：{conflict.Pinyin} → {text}");
             }
 
-            return true;
+            // 简拼那条冲突不影响全拼已经写进去这个事实。
+            return !conflicts.Any(c => string.Equals(c.Pinyin, pinyin, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    /// <summary>
+    /// 给已有的短语补写简拼记录（老数据、或刚打开这个开关时用）。
+    /// </summary>
+    /// <returns>新增的条数。</returns>
+    public static int BackfillInitialPhrases()
+    {
+        if (!Settings.PhraseWriteInitials)
+        {
+            return 0;
+        }
+
+        lock (PhraseGate)
+        {
+            var phrases = Phrases.Read(out var error);
+            if (error is not null)
+            {
+                Log.Write($"补写简拼失败：{error}");
+                return 0;
+            }
+
+            var existing = phrases
+                .Select(p => (p.Text, p.Pinyin))
+                .ToHashSet();
+
+            var additions = new List<MspyPhrase>();
+            foreach (var phrase in phrases)
+            {
+                var initials = PhraseVariants.InitialsOf(phrase.Pinyin);
+                if (initials is null || existing.Contains((phrase.Text, initials)))
+                {
+                    continue;
+                }
+
+                additions.Add(phrase with { Pinyin = initials });
+                existing.Add((phrase.Text, initials));
+            }
+
+            if (additions.Count == 0)
+            {
+                return 0;
+            }
+
+            if (!Phrases.Merge(additions, overwriteOthers: false, out var conflicts))
+            {
+                Log.Write($"补写简拼失败：{Phrases.LastError}");
+                return 0;
+            }
+
+            var written = additions.Count - conflicts.Count;
+            Log.Write($"已为 {written} 条短语补写简拼记录");
+            return written;
         }
     }
 
@@ -181,6 +236,13 @@ internal static class AppServices
         }
 
         Log.Write($"已把 {written} 条用户词同步到微软拼音自定义短语");
+
+        // 同步进去的还是全拼，补上简拼才能按首字母打出来。
+        if (written > 0)
+        {
+            BackfillInitialPhrases();
+        }
+
         return written;
     }
 

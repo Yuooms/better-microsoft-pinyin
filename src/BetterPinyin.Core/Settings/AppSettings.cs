@@ -58,6 +58,15 @@ public sealed class AppSettings
     /// </remarks>
     public bool PhraseAutoWrite { get; set; } = true;
 
+    /// <summary>
+    /// 写入自定义短语时是否同时补一条简拼记录，使得打首字母也能出词。
+    /// </summary>
+    /// <remarks>
+    /// 输入法只按「拼音」字段做纯字符串匹配，不会自己从 <c>yisitalu</c> 推出 <c>ystl</c>，
+    /// 所以要让简拼也能出词，必须再写一条拼音为简拼、文本相同的记录。
+    /// </remarks>
+    public bool PhraseWriteInitials { get; set; } = true;
+
     /// <summary>写入微软拼音时的默认候选位置（1~9）。</summary>
     public int WordbookSyncPosition { get; set; } = 2;
 

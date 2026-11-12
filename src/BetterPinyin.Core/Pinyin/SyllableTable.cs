@@ -306,7 +306,20 @@ public sealed class SyllableTable
                 {
                     counts[end] = counts[i] + 1;
                     previous[end] = i;
-                    chosen[end] = GetCanonical(ids[0]);
+
+                    // 优先取「拼写本身」对应的音节：nie 既是 nie 的规范拼写，也是 lie 的模糊变体，
+                    // 直接取 ids[0] 会把用户输入的 nie 变成 lie，简拼与读音都会错位。
+                    var exact = -1;
+                    foreach (var id in ids)
+                    {
+                        if (spelling.Equals(_canonical[id], StringComparison.Ordinal))
+                        {
+                            exact = id;
+                            break;
+                        }
+                    }
+
+                    chosen[end] = GetCanonical(exact >= 0 ? exact : ids[0]);
                 }
             }
         }
@@ -331,9 +344,14 @@ public sealed class SyllableTable
     /// 取一个全拼串的声母串。
     /// </summary>
     /// <param name="pinyin">无调全拼，音节之间不分隔。</param>
-    /// <param name="initials">归一后的声母串。</param>
+    /// <param name="initials">简拼。</param>
+    /// <param name="normalize">
+    /// 是否按简拼索引的规则归一模糊音（<c>n→l</c>、<c>f→h</c>）。
+    /// 索引匹配要归一；但把简拼当作**触发码**写给输入法时必须保持原字母，
+    /// 否则 <c>faniesi</c> 会变成 <c>hls</c>，用户打 <c>fns</c> 反而出不来。
+    /// </param>
     /// <returns>能被完整切分返回 true。</returns>
-    public bool TryGetInitials(string pinyin, out string initials)
+    public bool TryGetInitials(string pinyin, out string initials, bool normalize = true)
     {
         initials = string.Empty;
         if (!TrySplit(pinyin, fuzzy: false, out var parts))
@@ -344,7 +362,7 @@ public sealed class SyllableTable
         var builder = new System.Text.StringBuilder(parts.Count);
         foreach (var part in parts)
         {
-            builder.Append(NormalizeInitial(part[0]));
+            builder.Append(normalize ? NormalizeInitial(part[0]) : part[0]);
         }
 
         initials = builder.ToString();
