@@ -3,6 +3,7 @@ using BetterPinyin.Core.Lexicon;
 using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Settings;
 using BetterPinyin.Core.Wordbook;
+using BetterPinyin.Interop.Ime;
 using BetterPinyin.Interop.Uia;
 
 namespace BetterPinyin.App;
@@ -51,7 +52,7 @@ internal static class AppServices
     /// <summary>微软拼音自定义短语的读写器。</summary>
     public static MspyPhraseStore Phrases { get; } = new();
 
-    /// <summary>微软拼音自学习词库的只读读取器。</summary>
+    /// <summary>微软拼音自学习词库的读写器（只支持删除，不支持新增）。</summary>
     public static MspyLearningStore Learning { get; } = new();
 
     /// <summary>串行化短语文件的写入，避免多次采纳并发改同一个文件。</summary>
@@ -251,6 +252,66 @@ internal static class AppServices
     {
         var global = Math.Clamp(Settings.WordbookSyncPosition, 1, 9);
         return word.UdpPosition is >= 1 and <= 9 ? word.UdpPosition : global;
+    }
+
+    /// <summary>从自学习词库里删掉若干词的结果。</summary>
+    /// <param name="Removed">实际删掉的条数。</param>
+    /// <param name="Reloaded">输入法是否已重新加载词库。</param>
+    /// <param name="ReloadMessage">重新加载的说明或失败原因。</param>
+    /// <param name="Error">写入失败的原因；成功为 null。</param>
+    public sealed record LearnedRemovalResult(int Removed, bool Reloaded, string ReloadMessage, string? Error);
+
+    /// <summary>
+    /// 从自学习词库里删除若干词，并让输入法立刻重新加载。
+    /// </summary>
+    /// <param name="texts">要删除的词面。</param>
+    /// <param name="window">
+    /// 借用的输入法上下文窗口：必须是设置窗口自己的句柄，而且它得处在前台。
+    /// 输入法只在键盘布局切走再切回时才重读词库，见 <c>ImeReloader</c>。
+    /// </param>
+    /// <returns>删除结果。</returns>
+    /// <remarks>
+    /// 输入法随时可能用内存里的副本覆盖文件，所以「写文件」和「让它重新加载」必须成对做；
+    /// 万一刚写完就被覆盖，这里会自动再试一次。
+    /// </remarks>
+    public static LearnedRemovalResult RemoveLearnedWords(IReadOnlyCollection<string> texts, IntPtr window)
+    {
+        var removed = 0;
+        var reloaded = false;
+        var reloadMessage = string.Empty;
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            if (!Learning.TryRemove(texts, out removed, out var error))
+            {
+                return new LearnedRemovalResult(0, false, string.Empty, error);
+            }
+
+            if (removed == 0)
+            {
+                break; // 这些词已经不在文件里了
+            }
+
+            reloaded = ImeReloader.TryReload(window, out reloadMessage);
+            Thread.Sleep(220);
+
+            if (!Learning.TryRead(out var words, out _))
+            {
+                break;
+            }
+
+            if (!words.Any(w => texts.Contains(w.Text)))
+            {
+                break; // 删除已经落到文件里
+            }
+        }
+
+        if (removed > 0)
+        {
+            Log.Write($"自学习词库删除 {removed} 条，重新加载：{(reloaded ? "成功" : reloadMessage)}");
+        }
+
+        return new LearnedRemovalResult(removed, reloaded, reloadMessage, null);
     }
 
     /// <summary>释放 UIA 线程，并把用户词库的挂起改动落盘。</summary>

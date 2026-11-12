@@ -180,6 +180,20 @@ internal static class Program
             return exitCode;
         }
 
+        if (args.Any(a => a.Equals("--reload-ime", StringComparison.OrdinalIgnoreCase)))
+        {
+            // 验证「切一次键盘布局就能让输入法重读自学习词库」这个结论，也方便改完文件手工复验。
+            // 默认借用当前前台窗口（探针自己没有可用的输入法上下文），加 --self 则只切本线程。
+            var target = args.Any(a => a.Equals("--self", StringComparison.OrdinalIgnoreCase))
+                ? IntPtr.Zero
+                : NativeMethods.GetForegroundWindow();
+            var reloaded = ImeReloader.TryReload(target, out var reloadMessage);
+            Console.WriteLine($"[重载] 目标窗口 = 0x{target.ToInt64():X}");
+            Console.WriteLine($"[重载] {(reloaded ? "✓" : "✗")} {reloadMessage}");
+            _uiaWorker.Dispose();
+            return reloaded ? 0 : 1;
+        }
+
         if (args.Any(a => a.Equals("--shot-only", StringComparison.OrdinalIgnoreCase)))
         {
             var target = args

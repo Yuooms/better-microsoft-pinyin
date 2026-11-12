@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using BetterPinyin.Core.Wordbook;
 using Microsoft.Win32;
 using ControlAppearance = Wpf.Ui.Controls.ControlAppearance;
@@ -33,10 +34,15 @@ public partial class WordbookPage : Page
         "这里直接管理微软拼音的「用户定义的短语」。采纳过的云词会自动写进来，写入后几秒生效，打拼音就能在原生候选里看到。";
 
     private const string LearningSubtitle =
-        "输入法在你反复打某个词之后会自己记下来，存在本机，用于调整原生候选的顺序。下面是它已经学到的词，仅供查看与导出。";
+        "输入法在你反复打某个词之后会自己记下来，存在本机，用于调整原生候选的顺序。勾选不再需要的词可以直接删掉，删完输入法会重新加载。";
 
     private readonly ObservableCollection<PhraseRow> _rows = new();
     private readonly ObservableCollection<LearnedRow> _learnedRows = new();
+
+    /// <summary>当前筛选后真正显示出来的行，全选只作用于它们。</summary>
+    private List<PhraseRow> _visiblePhrases = new();
+
+    private List<LearnedRow> _visibleLearned = new();
 
     private IReadOnlyList<MspyLearnedWord> _learnedWords = Array.Empty<MspyLearnedWord>();
 
@@ -176,12 +182,19 @@ public partial class WordbookPage : Page
         }
 
         LearningEmptyText.Visibility = _learnedRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        _visibleLearned = _learnedRows.ToList();
+        UpdateLearningSelection();
     }
 
     private void OnLearningSearchChanged(object sender, TextChangedEventArgs e)
     {
         if (_initialized)
         {
+            foreach (var row in _learnedRows)
+            {
+                row.IsSelected = false;
+            }
+
             ApplyLearningFilter();
         }
     }
@@ -267,6 +280,8 @@ public partial class WordbookPage : Page
 
         RowsList.ItemsSource = visible;
         EmptyText.Visibility = visible.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        _visiblePhrases = visible;
+        UpdatePhraseSelection();
     }
 
     private void UpdateStatus(string? error)
@@ -282,6 +297,12 @@ public partial class WordbookPage : Page
     {
         if (_initialized)
         {
+            // 换了筛选条件就重新开始选，免得删到看不见的行。
+            foreach (var row in _rows)
+            {
+                row.IsSelected = false;
+            }
+
             ApplyFilter();
         }
     }
@@ -424,10 +445,16 @@ public partial class WordbookPage : Page
             return;
         }
 
-        var phrases = AppServices.Phrases.Read(out _)
-            .Where(p => !SameCode(p, row.Pinyin) &&
-                        (row.Initials.Length == 0 || !SameCode(p, row.Initials)))
-            .ToList();
+        // 读失败时绝不能接着写：那会把整个短语文件清空。
+        var phrases = AppServices.Phrases.Read(out var readError).ToList();
+        if (readError is not null)
+        {
+            StatusText.Text = $"删除中止：读取短语失败（{readError}）";
+            return;
+        }
+
+        phrases.RemoveAll(p => SameCode(p, row.Pinyin) ||
+                               (row.Initials.Length > 0 && SameCode(p, row.Initials)));
 
         if (!AppServices.Phrases.ReplaceAll(phrases))
         {
@@ -437,6 +464,162 @@ public partial class WordbookPage : Page
 
         Reload();
         StatusText.Text = $"已删除「{row.Text}」（{row.Pinyin}）。";
+    }
+
+    // ── 多选与批量删除 ────────────────────────────────────────
+
+    /// <summary>行的复选框点击：两个列表共用，按行的类型分派。</summary>
+    private void OnRowSelectionClick(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is PhraseRow)
+        {
+            UpdatePhraseSelection();
+        }
+        else
+        {
+            UpdateLearningSelection();
+        }
+    }
+
+    /// <summary>同步「删除选中」按钮和表头全选框的状态。</summary>
+    private void UpdatePhraseSelection()
+    {
+        var count = _rows.Count(r => r.IsSelected);
+        PhraseDeleteButton.Content = count > 0 ? $"删除选中 ({count})" : "删除选中";
+        PhraseDeleteButton.IsEnabled = count > 0;
+
+        PhraseSelectAll.IsChecked = _visiblePhrases.Count > 0 && _visiblePhrases.All(r => r.IsSelected)
+            ? true
+            : _visiblePhrases.Any(r => r.IsSelected) ? null : false;
+    }
+
+    private void UpdateLearningSelection()
+    {
+        var count = _learnedRows.Count(r => r.IsSelected);
+        LearningDeleteButton.Content = count > 0 ? $"删除选中 ({count})" : "删除选中";
+        LearningDeleteButton.IsEnabled = count > 0;
+
+        LearningSelectAll.IsChecked = _visibleLearned.Count > 0 && _visibleLearned.All(r => r.IsSelected)
+            ? true
+            : _visibleLearned.Any(r => r.IsSelected) ? null : false;
+    }
+
+    private void OnPhraseSelectAllClick(object sender, RoutedEventArgs e)
+    {
+        var select = PhraseSelectAll.IsChecked == true;
+        foreach (var row in _visiblePhrases)
+        {
+            row.IsSelected = select;
+        }
+
+        UpdatePhraseSelection();
+    }
+
+    private void OnLearningSelectAllClick(object sender, RoutedEventArgs e)
+    {
+        var select = LearningSelectAll.IsChecked == true;
+        foreach (var row in _visibleLearned)
+        {
+            row.IsSelected = select;
+        }
+
+        UpdateLearningSelection();
+    }
+
+    private void OnDeleteSelectedPhrasesClick(object sender, RoutedEventArgs e)
+    {
+        var selected = _rows.Where(r => r.IsSelected).ToList();
+        if (selected.Count == 0)
+        {
+            return;
+        }
+
+        if (!Confirm($"确定删除选中的 {selected.Count} 条短语？删除后打这些拼音就不会再出词了。", "删除短语"))
+        {
+            return;
+        }
+
+        // 读失败时绝不能接着写：那会把整个短语文件清空。
+        var phrases = AppServices.Phrases.Read(out var readError).ToList();
+        if (readError is not null)
+        {
+            StatusText.Text = $"删除中止：读取短语失败（{readError}）";
+            return;
+        }
+
+        phrases.RemoveAll(p => selected.Any(r => SameCode(p, r.Pinyin) ||
+                                                (r.Initials.Length > 0 && SameCode(p, r.Initials))));
+
+        if (!AppServices.Phrases.ReplaceAll(phrases))
+        {
+            StatusText.Text = $"删除失败：{AppServices.Phrases.LastError}";
+            return;
+        }
+
+        Reload();
+        StatusText.Text = $"已删除 {selected.Count} 条短语。";
+    }
+
+    private void OnDeleteSelectedLearningClick(object sender, RoutedEventArgs e)
+    {
+        var selected = _learnedRows
+            .Where(r => r.IsSelected)
+            .Select(r => r.Text)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        if (selected.Count == 0)
+        {
+            return;
+        }
+
+        if (!Confirm(
+                $"确定从自学习词库里删除选中的 {selected.Count} 个词？\n\n"
+                + "删除后输入法会重新加载词库，几秒内生效；原文件会先备份。",
+                "删除自学习词"))
+        {
+            return;
+        }
+
+        LearningStatusText.Text = $"正在删除 {selected.Count} 条…";
+        UpdateLayout();
+
+        var result = AppServices.RemoveLearnedWords(selected, GetWindowHandle());
+
+        LoadLearning();
+
+        if (result.Error is not null)
+        {
+            LearningStatusText.Text = $"删除失败：{result.Error}";
+            return;
+        }
+
+        if (result.Removed == 0)
+        {
+            LearningStatusText.Text = "这些词已经不在自学习词库里了（可能被输入法自己清理了）。";
+            return;
+        }
+
+        LearningStatusText.Text = result.Reloaded
+            ? $"已删除 {result.Removed} 条，{result.ReloadMessage}打这些拼音就不会再出这些词了。"
+            : $"已删除 {result.Removed} 条并写入文件，但没能让输入法重新加载：{result.ReloadMessage}"
+            + "改动可能会被输入法覆盖，建议注销后重新登录再试。";
+    }
+
+    /// <summary>取本页所在窗口的句柄，用于让输入法切换一次输入法上下文。</summary>
+    private IntPtr GetWindowHandle()
+    {
+        var window = Window.GetWindow(this);
+        return window is null ? IntPtr.Zero : new WindowInteropHelper(window).Handle;
+    }
+
+    private bool Confirm(string message, string title)
+    {
+        var owner = Window.GetWindow(this);
+        var result = owner is null
+            ? MessageBox.Show(message, title, MessageBoxButton.OKCancel, MessageBoxImage.Warning)
+            : MessageBox.Show(owner, message, title, MessageBoxButton.OKCancel, MessageBoxImage.Warning);
+        return result == MessageBoxResult.OK;
     }
 
     private void OnImportLearnedClick(object sender, RoutedEventArgs e)

@@ -75,15 +75,16 @@ internal static class CoreTests
 {
     public static void RunAll()
     {
-        Run("[1/9] Bing 响应解析", Parser);
-        Run("[2/9] 候选清洗", Sanitizer);
-        Run("[3/9] 拼音匹配", Matcher);
-        Run("[4/9] 严格 / 扩展分区", Selector);
-        Run("[5/9] 排序合并（旧链路）", Ranker);
-        Run("[6/9] 设置持久化", Settings);
-        Run("[7/9] 词库词表", Catalog);
-        Run("[8/9] 用户词库", Wordbook);
-        Run("[9/9] 自学习词库", Learning);
+        Run("[1/10] Bing 响应解析", Parser);
+        Run("[2/10] 候选清洗", Sanitizer);
+        Run("[3/10] 拼音匹配", Matcher);
+        Run("[4/10] 严格 / 扩展分区", Selector);
+        Run("[5/10] 排序合并（旧链路）", Ranker);
+        Run("[6/10] 设置持久化", Settings);
+        Run("[7/10] 词库词表", Catalog);
+        Run("[8/10] 用户词库", Wordbook);
+        Run("[9/10] 自学习词库", Learning);
+        Run("[10/10] 自学习词库删除", LearningDelete);
     }
 
     /// <summary>逐组执行，一组崩掉不影响其它组出结论。</summary>
@@ -397,6 +398,86 @@ internal static class CoreTests
             var lines = File.ReadAllLines(csvPath);
             Check.Equal(3, lines.Length, "CSV 应为表头 + 两条");
             Check.True(lines[1].Contains("伊斯塔露,yisitalu", StringComparison.Ordinal), "CSV 第一行内容");
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 删除自学习词库里的条目：只改记录区，槽位数不变，其它条目原样保留。
+    /// </summary>
+    private static void LearningDelete()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"bp-learn-del-{Guid.NewGuid():N}");
+        var path = Path.Combine(directory, "ChsPinyinUDL.dat");
+        var backupDirectory = Path.Combine(directory, "backup");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            var data = BuildLearningFile(
+                ("伊斯塔露", "yst", 4),
+                ("若娜瓦", "rnw", 3),
+                ("多余词", "dyc", 3));
+            File.WriteAllBytes(path, data);
+
+            var store = new MspyLearningStore(path, backupDirectory);
+            Check.True(
+                store.TryRemove(new[] { "若娜瓦" }, out var removed, out var error),
+                $"删除应成功：{error}");
+            Check.Equal(1, removed, "删除 1 条");
+
+            var after = File.ReadAllBytes(path);
+            Check.Equal(data.Length, after.Length, "文件长度不变");
+            Check.True(after.AsSpan(0, 0x0C).SequenceEqual(data.AsSpan(0, 0x0C)), "文件头不被改动");
+            Check.Equal(3u, BitConverter.ToUInt32(after, 0x0C), "槽位数保持 3");
+
+            var slot = 0x2400 + 60;
+            Check.Equal((byte)0xAA, after[slot + 11], "被删槽位标记为空");
+            Check.True(
+                after.AsSpan(slot, 11).ToArray().All(b => b == 0) &&
+                after.AsSpan(slot + 12, 48).ToArray().All(b => b == 0),
+                "被删槽位内容清零");
+            Check.True(
+                after.AsSpan(0x2400, 60).SequenceEqual(data.AsSpan(0x2400, 60)),
+                "前一条不受影响");
+            Check.True(
+                after.AsSpan(0x2400 + 120, 60).SequenceEqual(data.AsSpan(0x2400 + 120, 60)),
+                "后一条不受影响");
+
+            Check.True(store.TryRead(out var rest, out _), "删除后仍可读");
+            Check.Equal(2, rest.Count, "只剩 2 条");
+            Check.True(rest.All(w => w.Text != "若娜瓦"), "被删的词不再出现");
+
+            // 删除不存在的词不算失败，也不写文件。
+            Check.True(store.TryRemove(new[] { "没有这个词" }, out var again, out _), "删不存在的词应成功");
+            Check.Equal(0, again, "没有删到东西");
+            Check.True(
+                File.ReadAllBytes(path).AsSpan().SequenceEqual(after),
+                "没删到东西时不应改动文件");
+
+            // 删除前必须留下备份。
+            var backups = Directory.Exists(backupDirectory)
+                ? Directory.GetFiles(backupDirectory, "*.bak.dat")
+                : Array.Empty<string>();
+            Check.Equal(1, backups.Length, "应生成一份备份");
+            Check.True(
+                File.ReadAllBytes(backups[0]).SequenceEqual(data),
+                "备份应是删除前的内容");
+
+            // 小端计数被破坏时必须拒绝写入，而不是把文件写成垃圾。
+            var broken = Path.Combine(directory, "broken.dat");
+            var brokenData = BuildLearningFile(("伊斯塔露", "yst", 4));
+            BitConverter.GetBytes(99u).CopyTo(brokenData, 0x0C);
+            File.WriteAllBytes(broken, brokenData);
+            Check.False(
+                new MspyLearningStore(broken, backupDirectory).TryRemove(new[] { "伊斯塔露" }, out _, out var brokenError),
+                "记录数越界应拒绝删除");
+            Check.True(brokenError is not null, "拒绝时应给出原因");
         }
         finally
         {

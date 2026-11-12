@@ -245,6 +245,26 @@ public static class NativeMethods
     [DllImport("user32.dll")]
     public static extern IntPtr GetKeyboardLayout(uint idThread);
 
+    /// <summary>列出本机已加载的键盘布局，返回实际写入的数量。</summary>
+    [DllImport("user32.dll")]
+    public static extern int GetKeyboardLayoutList(int nBuff, [Out] IntPtr[]? lpList);
+
+    /// <summary>加载键盘布局，<paramref name="flags"/> 传 0 表示只加载不激活。</summary>
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr LoadKeyboardLayout(string pwszKLID, uint flags);
+
+    /// <summary>为调用线程激活已加载的键盘布局。</summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr ActivateKeyboardLayout(IntPtr hkl, uint flags);
+
+    /// <summary>向窗口投递消息（不等待处理）。</summary>
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostMessage(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    /// <summary>请求窗口所在线程切换输入法（DefWindowProc 会转成 ActivateKeyboardLayout）。</summary>
+    public const uint WM_INPUTLANGCHANGEREQUEST = 0x0050;
+
     /// <summary>获取异步键状态（用于读取 Shift/Ctrl/Alt）。</summary>
     [DllImport("user32.dll")]
     public static extern short GetAsyncKeyState(int vKey);

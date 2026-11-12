@@ -49,7 +49,7 @@ internal sealed class WordbookSettingsPage : ISettingsPage
     public string Glyph => "\uE8F1";
 
     /// <inheritdoc />
-    public string? Description => "查看与编辑微软拼音的自定义短语";
+    public string? Description => "管理微软拼音的自定义短语与自学习词汇";
 
     /// <inheritdoc />
     public Type ViewType => typeof(WordbookPage);

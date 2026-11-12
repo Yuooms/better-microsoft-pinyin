@@ -21,14 +21,14 @@ public readonly record struct MspyLearnedWord(string Text, string Jianpin, int L
 /// 自学习由输入法按使用行为累积，用来调整候选顺序，也会被「清除输入历史记录」清空。
 /// </para>
 /// <para>
-/// 格式是社区逆向的结果，这里只做**读取**，任何字段不符就整份放弃，绝不写入：
+/// 格式是社区逆向的结果，这里只支持**读取**与**删除**，不新增、不改内容：
 /// <code>
 /// 0x00  u8[4] 魔数 55 AA 88 81
 /// 0x04  u8[4] 固定 02 00 60 00（记录长度 60）
 /// 0x08  u8[4] 校验 55 AA 55 AA
-/// 0x0C  u32   记录数（含已释放的空槽）
+/// 0x0C  u32   槽位数（含已释放的空槽）
 /// 0x10  u32   保留
-/// 0x14  u32   导出时间戳 / 校验值（用途未确认，原样忽略）
+/// 0x14  u32   最后写入时间（按 1996 年为基准的秒数，原样保留）
 /// 0x18~0x23FF 零填充
 /// 0x2400 起，每条 60 字节：
 ///       +0  u8[4] 条目指纹（疑似哈希，用途未确认）
@@ -42,6 +42,10 @@ public readonly record struct MspyLearnedWord(string Text, string Jianpin, int L
 /// </code>
 /// </para>
 /// <para>
+/// 删除的做法与输入法自己完全一致：把 60 字节整条清零，再在 +11 写 0xAA，槽位数不变。
+/// 实测输入法接受这种改动，且不会回写覆盖。
+/// </para>
+/// <para>
 /// 拼音索引没有对应的公开音节表，这里改用「本程序词库的单字读音 + 文件里的简拼首字母」
 /// 反推拼音：简拼给出每个音节的声母，正好能消掉多音字（重 zhòng/chóng）的歧义。
 /// 因此 <see cref="ResolvePinyin"/> 的结果是**推断值**，个别生僻字可能不完整。
@@ -52,6 +56,9 @@ public sealed class MspyLearningStore
     private const int HeaderLength = 0x2400;
     private const int RecordLength = 60;
     private const int MaxWordLength = 12;
+    private const int FlagOffset = 11;
+    private const byte FlagValid = 0x5A;
+    private const byte FlagFree = 0xAA;
 
     private static readonly byte[] Magic = { 0x55, 0xAA, 0x88, 0x81 };
     private static readonly byte[] Magic2 = { 0x55, 0xAA, 0x55, 0xAA };
@@ -69,10 +76,24 @@ public sealed class MspyLearningStore
 
     /// <summary>用指定路径创建，便于测试。</summary>
     /// <param name="filePath">词库文件路径。</param>
-    public MspyLearningStore(string filePath) => FilePath = filePath;
+    /// <param name="backupDirectory">备份目录；为空时用 <c>%APPDATA%\BetterPinyin\udl-backup</c>。</param>
+    public MspyLearningStore(string filePath, string? backupDirectory = null)
+    {
+        FilePath = filePath;
+        BackupDirectory = backupDirectory ?? Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "BetterPinyin",
+            "udl-backup");
+    }
 
     /// <summary>词库文件路径。</summary>
     public string FilePath { get; }
+
+    /// <summary>删除前的备份目录。</summary>
+    public string BackupDirectory { get; }
+
+    /// <summary>最近一次错误。</summary>
+    public string? LastError { get; private set; }
 
     /// <summary>文件是否存在。</summary>
     public bool Exists => File.Exists(FilePath);
@@ -104,7 +125,154 @@ public sealed class MspyLearningStore
         words = Array.Empty<MspyLearnedWord>();
         error = null;
 
-        byte[] data;
+        if (!TryReadBytes(out var data, out error))
+        {
+            return false;
+        }
+
+        var count = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(0x0C, 4));
+
+        var list = new List<MspyLearnedWord>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var offset = HeaderLength + (i * RecordLength);
+            var length = data[offset + 10];
+            if (data[offset + FlagOffset] != FlagValid || length is 0 or > MaxWordLength)
+            {
+                continue; // 空槽（0xAA）或已损坏的条目
+            }
+
+            var jianpin = Encoding.ASCII.GetString(data, offset + 4, 3).TrimEnd('\0');
+            var text = Encoding.Unicode.GetString(data, offset + 12, length * 2);
+            if (text.Length != length || text.Contains('\0'))
+            {
+                continue;
+            }
+
+            list.Add(new MspyLearnedWord(text, jianpin, length));
+        }
+
+        words = list;
+        return true;
+    }
+
+    /// <summary>
+    /// 从自学习词库里删掉若干条，写法和输入法自己删词一致（整条清零、+11 写 0xAA）。
+    /// </summary>
+    /// <param name="texts">要删除的词面，按完全相等匹配；不存在的词忽略。</param>
+    /// <param name="removed">实际删除的条目数。</param>
+    /// <param name="error">失败原因；成功为 null。</param>
+    /// <returns>写入并校验成功返回 true。</returns>
+    /// <remarks>
+    /// 只改记录区，文件头与槽位数全部原样保留，因此不认识的字段不会被破坏。
+    /// 写入前会先备份到 <see cref="BackupDirectory"/>。
+    /// 注意：写文件本身**不会**让输入法立刻看到改动，调用方还必须让它重新加载
+    /// （见 <c>BetterPinyin.Interop.Ime.ImeReloader</c>）。
+    /// </remarks>
+    public bool TryRemove(IReadOnlyCollection<string> texts, out int removed, out string? error)
+    {
+        removed = 0;
+        error = null;
+        LastError = null;
+
+        if (texts.Count == 0)
+        {
+            return true;
+        }
+
+        if (!TryReadBytes(out var data, out error))
+        {
+            LastError = error;
+            return false;
+        }
+
+        var wanted = new HashSet<string>(texts, StringComparer.Ordinal);
+        var count = (int)BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(0x0C, 4));
+
+        var targets = new List<int>();
+        for (var i = 0; i < count; i++)
+        {
+            var offset = HeaderLength + (i * RecordLength);
+            var length = data[offset + 10];
+            if (data[offset + FlagOffset] != FlagValid || length is 0 or > MaxWordLength)
+            {
+                continue;
+            }
+
+            var text = Encoding.Unicode.GetString(data, offset + 12, length * 2);
+            if (text.Length == length && !text.Contains('\0') && wanted.Contains(text))
+            {
+                targets.Add(i);
+            }
+        }
+
+        if (targets.Count == 0)
+        {
+            return true; // 已经被删掉（例如输入法自己整理了词库），不算错误
+        }
+
+        if (!Backup())
+        {
+            error = LastError;
+            return false;
+        }
+
+        var changed = (byte[])data.Clone();
+        foreach (var index in targets)
+        {
+            var offset = HeaderLength + (index * RecordLength);
+            Array.Clear(changed, offset, RecordLength);
+            changed[offset + FlagOffset] = FlagFree;
+        }
+
+        // 整份写回，避免逐条写时半途中断留下坏记录。
+        try
+        {
+            using var stream = new FileStream(
+                FilePath,
+                FileMode.Open,
+                FileAccess.Write,
+                FileShare.ReadWrite | FileShare.Delete);
+            stream.Position = 0;
+            stream.Write(changed, 0, changed.Length);
+            stream.Flush(flushToDisk: true);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            error = $"写入失败：{ex.Message}";
+            LastError = error;
+            return false;
+        }
+
+        removed = targets.Count;
+
+        // 输入法随时可能用内存里的副本覆盖文件，写完立刻回读确认，避免「显示删成功、其实没删」。
+        if (TryReadBytes(out var after, out _))
+        {
+            foreach (var index in targets)
+            {
+                var offset = HeaderLength + (index * RecordLength);
+                if (after[offset + FlagOffset] != FlagFree)
+                {
+                    error = "写入后立刻被输入法覆盖了，请重试。";
+                    LastError = error;
+                    removed = 0;
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 读取原始字节并做格式校验，读写两条路径共用。
+    /// </summary>
+    private bool TryReadBytes(out byte[] data, out string? error)
+    {
+        data = Array.Empty<byte>();
+        error = null;
+
         try
         {
             // 输入法可能正开着这个文件，必须允许读写共享，否则会拿到「文件被占用」。
@@ -150,28 +318,33 @@ public sealed class MspyLearningStore
             return false;
         }
 
-        var list = new List<MspyLearnedWord>(count);
-        for (var i = 0; i < count; i++)
-        {
-            var offset = HeaderLength + (i * RecordLength);
-            var length = data[offset + 10];
-            if (data[offset + 11] != 0x5A || length is 0 or > MaxWordLength)
-            {
-                continue; // 空槽（0xAA）或已损坏的条目
-            }
-
-            var jianpin = Encoding.ASCII.GetString(data, offset + 4, 3).TrimEnd('\0');
-            var text = Encoding.Unicode.GetString(data, offset + 12, length * 2);
-            if (text.Length != length || text.Contains('\0'))
-            {
-                continue;
-            }
-
-            list.Add(new MspyLearnedWord(text, jianpin, length));
-        }
-
-        words = list;
         return true;
+    }
+
+    /// <summary>写前备份，失败则中止写入。</summary>
+    private bool Backup()
+    {
+        try
+        {
+            Directory.CreateDirectory(BackupDirectory);
+            var name = $"ChsPinyinUDL.{DateTime.Now:yyyyMMdd_HHmmss}.bak.dat";
+            File.Copy(FilePath, Path.Combine(BackupDirectory, name), overwrite: true);
+
+            // 只留最近 10 份，避免长期使用把用户目录撑大。
+            foreach (var old in Directory.GetFiles(BackupDirectory, "*.bak.dat")
+                         .OrderByDescending(File.GetLastWriteTimeUtc)
+                         .Skip(10))
+            {
+                File.Delete(old);
+            }
+
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            LastError = $"备份失败，已中止写入：{ex.Message}";
+            return false;
+        }
     }
 
     /// <summary>

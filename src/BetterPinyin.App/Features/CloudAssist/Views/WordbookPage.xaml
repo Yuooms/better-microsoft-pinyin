@@ -8,7 +8,7 @@
 
     <!--
         这一页管理微软拼音自己的两份数据：
-        「自定义短语」（ChsPinyinEUDPv1.lex，可读写）与「自学习」（ChsPinyinUDL.dat，只读）。
+        「自定义短语」（ChsPinyinEUDPv1.lex，可读写）与「自学习」（ChsPinyinUDL.dat，可读可删）。
         两者都不是本程序内部的排序数据 —— 用户改完打拼音就能在原生候选里看到，效果可验证。
     -->
     <Grid Margin="{DynamicResource PagePadding}">
@@ -84,6 +84,12 @@
                     <fl:Button Content="从学习记录导入" Margin="8,0,0,0" Click="OnImportLearnedClick" />
                     <fl:Button Content="导入 txt" Margin="8,0,0,0" Click="OnImportClick" />
                     <fl:Button Content="导出 txt" Margin="8,0,0,0" Click="OnExportClick" />
+                    <fl:Button x:Name="PhraseDeleteButton"
+                               Content="删除选中"
+                               Appearance="Danger"
+                               IsEnabled="False"
+                               Margin="8,0,0,0"
+                               Click="OnDeleteSelectedPhrasesClick" />
                 </StackPanel>
             </Grid>
 
@@ -96,17 +102,27 @@
                 <!-- 表头列宽必须与行模板完全一致，否则会错位。 -->
                 <Grid Grid.Row="0">
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="32" />
                         <ColumnDefinition Width="2*" />
                         <ColumnDefinition Width="3*" />
                         <ColumnDefinition Width="150" />
                         <ColumnDefinition Width="72" />
                         <ColumnDefinition Width="160" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="拼音" Style="{StaticResource Hint}" />
-                    <TextBlock Grid.Column="1" Text="短语" Style="{StaticResource Hint}" />
-                    <TextBlock Grid.Column="2" Text="来源" Style="{StaticResource Hint}" />
-                    <TextBlock Grid.Column="3" Text="位置" Style="{StaticResource Hint}" />
-                    <TextBlock Grid.Column="4" Text="操作" Style="{StaticResource Hint}" />
+                    <CheckBox x:Name="PhraseSelectAll"
+                              Grid.Column="0"
+                              Width="20"
+                              Height="20"
+                              Padding="0"
+                              IsThreeState="True"
+                              VerticalAlignment="Center"
+                              ToolTip="全选当前列表（只影响筛选后可见的行）"
+                              Click="OnPhraseSelectAllClick" />
+                    <TextBlock Grid.Column="1" Text="拼音" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="2" Text="短语" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="3" Text="来源" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="4" Text="位置" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="5" Text="操作" Style="{StaticResource Hint}" />
                 </Grid>
 
                 <fl:ListView x:Name="RowsList"
@@ -119,6 +135,7 @@
                         <DataTemplate>
                             <Grid Height="38">
                                 <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="32" />
                                     <ColumnDefinition Width="2*" />
                                     <ColumnDefinition Width="3*" />
                                     <ColumnDefinition Width="150" />
@@ -126,25 +143,33 @@
                                     <ColumnDefinition Width="160" />
                                 </Grid.ColumnDefinitions>
 
-                                <TextBlock Grid.Column="0"
+                                <CheckBox Grid.Column="0"
+                                          Width="20"
+                                          Height="20"
+                                          Padding="0"
+                                          IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          VerticalAlignment="Center"
+                                          Click="OnRowSelectionClick" />
+
+                                <TextBlock Grid.Column="1"
                                            Text="{Binding Code}"
                                            VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                            TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="1"
+                                <TextBlock Grid.Column="2"
                                            Text="{Binding Text}"
                                            VerticalAlignment="Center"
                                            TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="2"
+                                <TextBlock Grid.Column="3"
                                            Text="{Binding Source}"
                                            VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Grid.Column="3"
+                                <TextBlock Grid.Column="4"
                                            Text="{Binding Position}"
                                            VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
 
-                                <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
+                                <StackPanel Grid.Column="5" Orientation="Horizontal" VerticalAlignment="Center">
                                     <fl:Button Content="编辑" Tag="{Binding}" Click="OnEditClick" Padding="8,2" MinWidth="40" />
                                     <fl:Button Content="删除" Tag="{Binding}" Click="OnDeleteClick" Padding="8,2" MinWidth="40" Margin="6,0,0,0" />
                                 </StackPanel>
@@ -221,6 +246,12 @@
                 <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
                     <fl:Button Content="刷新" Click="OnLearningRefreshClick" />
                     <fl:Button Content="导出 CSV" Margin="8,0,0,0" Click="OnLearningExportClick" />
+                    <fl:Button x:Name="LearningDeleteButton"
+                               Content="删除选中"
+                               Appearance="Danger"
+                               IsEnabled="False"
+                               Margin="8,0,0,0"
+                               Click="OnDeleteSelectedLearningClick" />
                 </StackPanel>
             </Grid>
 
@@ -232,15 +263,25 @@
 
                 <Grid Grid.Row="0">
                     <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="32" />
                         <ColumnDefinition Width="3*" />
                         <ColumnDefinition Width="3*" />
                         <ColumnDefinition Width="140" />
                         <ColumnDefinition Width="72" />
                     </Grid.ColumnDefinitions>
-                    <TextBlock Grid.Column="0" Text="学到的词" Style="{StaticResource Hint}" />
-                    <TextBlock Grid.Column="1" Text="拼音（推断）" Style="{StaticResource Hint}" />
-                    <TextBlock Grid.Column="2" Text="简拼" Style="{StaticResource Hint}" />
-                    <TextBlock Grid.Column="3" Text="字数" Style="{StaticResource Hint}" />
+                    <CheckBox x:Name="LearningSelectAll"
+                              Grid.Column="0"
+                              Width="20"
+                              Height="20"
+                              Padding="0"
+                              IsThreeState="True"
+                              VerticalAlignment="Center"
+                              ToolTip="全选当前列表（只影响筛选后可见的行）"
+                              Click="OnLearningSelectAllClick" />
+                    <TextBlock Grid.Column="1" Text="学到的词" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="2" Text="拼音（推断）" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="3" Text="简拼" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="4" Text="字数" Style="{StaticResource Hint}" />
                 </Grid>
 
                 <fl:ListView x:Name="LearningList"
@@ -253,26 +294,35 @@
                         <DataTemplate>
                             <Grid Height="38">
                                 <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="32" />
                                     <ColumnDefinition Width="3*" />
                                     <ColumnDefinition Width="3*" />
                                     <ColumnDefinition Width="140" />
                                     <ColumnDefinition Width="72" />
                                 </Grid.ColumnDefinitions>
 
-                                <TextBlock Grid.Column="0"
+                                <CheckBox Grid.Column="0"
+                                          Width="20"
+                                          Height="20"
+                                          Padding="0"
+                                          IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          VerticalAlignment="Center"
+                                          Click="OnRowSelectionClick" />
+
+                                <TextBlock Grid.Column="1"
                                            Text="{Binding Text}"
                                            VerticalAlignment="Center"
                                            TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="1"
+                                <TextBlock Grid.Column="2"
                                            Text="{Binding Pinyin}"
                                            VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                                            TextTrimming="CharacterEllipsis" />
-                                <TextBlock Grid.Column="2"
+                                <TextBlock Grid.Column="3"
                                            Text="{Binding Jianpin}"
                                            VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                <TextBlock Grid.Column="3"
+                                <TextBlock Grid.Column="4"
                                            Text="{Binding Length}"
                                            VerticalAlignment="Center"
                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
@@ -300,7 +350,7 @@
                 <TextBlock Margin="0,4,0,0"
                            TextWrapping="Wrap"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                           Text="这份数据由输入法自己维护，本程序只读不写。它只在打字时影响原生候选的排序；想固定成短语请到「自定义短语」添加。" />
+                           Text="勾选后可以删除不再需要的词：本程序按输入法自己的方式把它标记成空槽，再让输入法重新加载，几秒内生效。删除前会自动备份到「用户目录\AppData\Roaming\BetterPinyin\udl-backup」，只影响自学习词库，不动自定义短语与其它设置。" />
             </StackPanel>
         </Grid>
     </Grid>
