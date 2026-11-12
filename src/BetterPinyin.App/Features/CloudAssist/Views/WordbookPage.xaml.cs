@@ -1,9 +1,11 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using BetterPinyin.Core.Wordbook;
 using Microsoft.Win32;
+using ControlAppearance = Wpf.Ui.Controls.ControlAppearance;
 
 namespace BetterPinyin.App.Features.CloudAssist.Views;
 
@@ -24,7 +26,19 @@ namespace BetterPinyin.App.Features.CloudAssist.Views;
 /// </remarks>
 public partial class WordbookPage : Page
 {
+    /// <summary>自学习列表最多展示这么多行，避免文件异常巨大时把界面拖死。</summary>
+    private const int LearningDisplayLimit = 5000;
+
+    private const string PhraseSubtitle =
+        "这里直接管理微软拼音的「用户定义的短语」。采纳过的云词会自动写进来，写入后几秒生效，打拼音就能在原生候选里看到。";
+
+    private const string LearningSubtitle =
+        "输入法在你反复打某个词之后会自己记下来，存在本机，用于调整原生候选的顺序。下面是它已经学到的词，仅供查看与导出。";
+
     private readonly ObservableCollection<PhraseRow> _rows = new();
+    private readonly ObservableCollection<LearnedRow> _learnedRows = new();
+
+    private IReadOnlyList<MspyLearnedWord> _learnedWords = Array.Empty<MspyLearnedWord>();
 
     private bool _initialized;
     private EditMode _mode = EditMode.None;
@@ -42,7 +56,27 @@ public partial class WordbookPage : Page
     public WordbookPage()
     {
         InitializeComponent();
+
+        for (var i = 1; i <= 9; i++)
+        {
+            EditPositionBox.Items.Add(new ComboBoxItem
+            {
+                Content = i.ToString(CultureInfo.InvariantCulture),
+                Tag = i,
+            });
+        }
+
         RowsList.ItemsSource = _rows;
+        LearningList.ItemsSource = _learnedRows;
+
+        // 默认显示「自定义短语」；--ui-shot 做界面回归时可用环境变量直接打开「自学习」或编辑面板。
+        var startupTab = Environment.GetEnvironmentVariable("BETTERPINYIN_UI_TAB");
+        ApplyTab(showLearning: string.Equals(startupTab, "learning", StringComparison.OrdinalIgnoreCase));
+        if (string.Equals(startupTab, "edit", StringComparison.OrdinalIgnoreCase))
+        {
+            ShowEditor(EditMode.Add, null);
+        }
+
         Loaded += OnLoaded;
     }
 
@@ -58,6 +92,112 @@ public partial class WordbookPage : Page
         AutoWriteToggle.IsChecked = AppServices.Settings.PhraseAutoWrite;
         LocalFirstToggle.IsChecked = AppServices.Settings.WordbookLocalFirst;
         Reload();
+    }
+
+    // ── 两个视图 ──────────────────────────────────────────────
+
+    private void OnTabClick(object sender, RoutedEventArgs e) =>
+        ApplyTab(showLearning: string.Equals(
+            (sender as FrameworkElement)?.Tag as string,
+            "Learning",
+            StringComparison.Ordinal));
+
+    private void ApplyTab(bool showLearning)
+    {
+        PhraseView.Visibility = showLearning ? Visibility.Collapsed : Visibility.Visible;
+        LearningView.Visibility = showLearning ? Visibility.Visible : Visibility.Collapsed;
+
+        // 当前页用 Primary，另一个用 Secondary；WPF-UI 的按钮本身就有这两种外观。
+        PhraseTabButton.Appearance = showLearning ? ControlAppearance.Secondary : ControlAppearance.Primary;
+        LearningTabButton.Appearance = showLearning ? ControlAppearance.Primary : ControlAppearance.Secondary;
+        SubtitleText.Text = showLearning ? LearningSubtitle : PhraseSubtitle;
+
+        if (showLearning)
+        {
+            LoadLearning();
+        }
+    }
+
+    // ── 自学习 ────────────────────────────────────────────────
+
+    private void LoadLearning()
+    {
+        var ok = AppServices.Learning.TryRead(out var words, out var error);
+        _learnedWords = ok ? words : Array.Empty<MspyLearnedWord>();
+        ApplyLearningFilter();
+
+        if (!ok)
+        {
+            LearningStatusText.Text = $"读取失败：{error} · {AppServices.Learning.FilePath}";
+            return;
+        }
+
+        var lastWrite = AppServices.Learning.LastWriteTime;
+        var stamp = lastWrite is null
+            ? "尚未写入"
+            : lastWrite.Value.ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture);
+        LearningStatusText.Text =
+            $"共 {_learnedWords.Count} 条 · 最后更新 {stamp} · {AppServices.Learning.FilePath}";
+    }
+
+    private void ApplyLearningFilter()
+    {
+        var query = LearningSearchBox.Text?.Trim() ?? string.Empty;
+        var lexicon = AppServices.Lexicon;
+
+        _learnedRows.Clear();
+        foreach (var word in _learnedWords)
+        {
+            if (_learnedRows.Count >= LearningDisplayLimit)
+            {
+                break;
+            }
+
+            if (query.Length > 0 &&
+                !word.Text.Contains(query, StringComparison.OrdinalIgnoreCase) &&
+                !word.Jianpin.Contains(query, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            _learnedRows.Add(new LearnedRow(
+                word.Text,
+                MspyLearningStore.ResolvePinyin(word.Text, word.Jianpin, lexicon),
+                word.Jianpin,
+                word.Length));
+        }
+
+        LearningEmptyText.Visibility = _learnedRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void OnLearningSearchChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_initialized)
+        {
+            ApplyLearningFilter();
+        }
+    }
+
+    private void OnLearningRefreshClick(object sender, RoutedEventArgs e) => LoadLearning();
+
+    private void OnLearningExportClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出自学习词汇",
+            Filter = "CSV 文件 (*.csv)|*.csv",
+            FileName = "mspy-learned.csv",
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var ok = MspyLearningStore.ExportCsv(_learnedWords, dialog.FileName, AppServices.Lexicon);
+        LearningStatusText.Text = ok
+            ? $"已导出 {_learnedWords.Count} 条到 {dialog.FileName}"
+            : "导出失败：文件被占用或没有写入权限。";
     }
 
     // ── 数据加载 ──────────────────────────────────────────────
@@ -141,6 +281,11 @@ public partial class WordbookPage : Page
         EditPinyinBox.Text = row?.Pinyin ?? string.Empty;
         EditTextBox.Text = row?.Text ?? string.Empty;
         EditConfirmButton.Content = mode == EditMode.Update ? "保存" : "添加";
+
+        // 新增时用设置里的默认位置，修改时沿用这条记录原来的位置，用户随时可改。
+        var position = row?.Position ?? AppServices.Settings.WordbookSyncPosition;
+        EditPositionBox.SelectedIndex = Math.Clamp(position, 1, 9) - 1;
+
         EditPanel.Visibility = Visibility.Visible;
         EditPinyinBox.Focus();
     }
@@ -179,8 +324,8 @@ public partial class WordbookPage : Page
         }
 
         var existing = phrases.FindIndex(p => string.Equals(p.Pinyin, pinyin, StringComparison.OrdinalIgnoreCase));
-        var position = existing >= 0
-            ? phrases[existing].Position
+        var position = EditPositionBox.SelectedItem is ComboBoxItem { Tag: int value }
+            ? value
             : Math.Clamp(AppServices.Settings.WordbookSyncPosition, 1, 9);
 
         var phrase = new MspyPhrase(pinyin, position, text);

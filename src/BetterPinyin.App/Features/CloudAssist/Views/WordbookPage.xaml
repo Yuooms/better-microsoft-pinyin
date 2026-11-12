@@ -7,160 +7,295 @@
       Background="Transparent">
 
     <!--
-        这一页管理的是**微软拼音自己的自定义短语**（ChsPinyinEUDPv1.lex），
-        不是本程序内部的排序数据 —— 用户改完打拼音就能在原生候选里看到，效果可验证。
+        这一页管理微软拼音自己的两份数据：
+        「自定义短语」（ChsPinyinEUDPv1.lex，可读写）与「自学习」（ChsPinyinUDL.dat，只读）。
+        两者都不是本程序内部的排序数据 —— 用户改完打拼音就能在原生候选里看到，效果可验证。
     -->
     <Grid Margin="{DynamicResource PagePadding}">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
-            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0" MaxWidth="1100" HorizontalAlignment="Left">
             <fl:TextBlock Text="词库" FontTypography="Title" />
-            <fl:TextBlock FontTypography="Caption"
+            <fl:TextBlock x:Name="SubtitleText"
+                          FontTypography="Caption"
                           TextWrapping="Wrap"
-                          Margin="0,4,0,0"
-                          Text="这里直接管理微软拼音的「用户定义的短语」。采纳过的云词会自动写进来，写入后几秒生效，打拼音就能在原生候选里看到。" />
+                          Margin="0,4,0,0" />
         </StackPanel>
 
+        <!-- 两套数据用分段按钮切换；用 Appearance 区分选中态，避免再写一套 TabControl 模板。 -->
         <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,14,0,0">
-            <fl:ToggleSwitch x:Name="AutoWriteToggle"
-                             Content="采纳后自动写入"
-                             Margin="0,0,24,0"
-                             Checked="OnToggleChanged"
-                             Unchecked="OnToggleChanged" />
-            <fl:ToggleSwitch x:Name="LocalFirstToggle"
-                             Content="本地命中不联网"
-                             Checked="OnToggleChanged"
-                             Unchecked="OnToggleChanged" />
+            <fl:Button x:Name="PhraseTabButton"
+                       Content="自定义短语"
+                       Appearance="Primary"
+                       Tag="Phrase"
+                       Click="OnTabClick" />
+            <fl:Button x:Name="LearningTabButton"
+                       Content="自学习"
+                       Margin="8,0,0,0"
+                       Tag="Learning"
+                       Click="OnTabClick" />
         </StackPanel>
 
-        <Grid Grid.Row="2" Margin="0,14,0,0" MaxWidth="1100" HorizontalAlignment="Stretch">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*" />
-                <ColumnDefinition Width="Auto" />
-            </Grid.ColumnDefinitions>
+        <!-- ══════════ 自定义短语 ══════════ -->
+        <Grid x:Name="PhraseView" Grid.Row="2" Margin="0,14,0,0">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
+            </Grid.RowDefinitions>
 
-            <fl:TextBox x:Name="SearchBox"
-                        Grid.Column="0"
-                        PlaceholderText="搜索拼音或短语"
-                        TextChanged="OnSearchChanged" />
+            <StackPanel Grid.Row="0" Orientation="Horizontal">
+                <fl:ToggleSwitch x:Name="AutoWriteToggle"
+                                 Content="采纳后自动写入"
+                                 Margin="0,0,24,0"
+                                 Checked="OnToggleChanged"
+                                 Unchecked="OnToggleChanged" />
+                <fl:ToggleSwitch x:Name="LocalFirstToggle"
+                                 Content="本地命中不联网"
+                                 Checked="OnToggleChanged"
+                                 Unchecked="OnToggleChanged" />
+            </StackPanel>
 
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
-                <fl:Button Content="刷新" Click="OnRefreshClick" />
-                <fl:Button Content="添加" Appearance="Primary" Margin="8,0,0,0" Click="OnAddClick" />
-                <fl:Button Content="从学习记录导入" Margin="8,0,0,0" Click="OnImportLearnedClick" />
-                <fl:Button Content="导入 txt" Margin="8,0,0,0" Click="OnImportClick" />
-                <fl:Button Content="导出 txt" Margin="8,0,0,0" Click="OnExportClick" />
+            <Grid Grid.Row="1" Margin="0,14,0,0" MaxWidth="1100" HorizontalAlignment="Stretch">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+
+                <fl:TextBox x:Name="SearchBox"
+                            Grid.Column="0"
+                            PlaceholderText="搜索拼音或短语"
+                            TextChanged="OnSearchChanged" />
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
+                    <fl:Button Content="刷新" Click="OnRefreshClick" />
+                    <fl:Button Content="添加" Appearance="Primary" Margin="8,0,0,0" Click="OnAddClick" />
+                    <fl:Button Content="从学习记录导入" Margin="8,0,0,0" Click="OnImportLearnedClick" />
+                    <fl:Button Content="导入 txt" Margin="8,0,0,0" Click="OnImportClick" />
+                    <fl:Button Content="导出 txt" Margin="8,0,0,0" Click="OnExportClick" />
+                </StackPanel>
+            </Grid>
+
+            <Grid Grid.Row="2" Margin="0,14,0,0" MaxWidth="1100" HorizontalAlignment="Stretch">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="28" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <!-- 表头列宽必须与行模板完全一致，否则会错位。 -->
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="2*" />
+                        <ColumnDefinition Width="3*" />
+                        <ColumnDefinition Width="150" />
+                        <ColumnDefinition Width="72" />
+                        <ColumnDefinition Width="160" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="拼音" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="1" Text="短语" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="2" Text="来源" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="3" Text="位置" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="4" Text="操作" Style="{StaticResource Hint}" />
+                </Grid>
+
+                <fl:ListView x:Name="RowsList"
+                             Grid.Row="1"
+                             VirtualizingPanel.IsVirtualizing="True"
+                             VirtualizingPanel.VirtualizationMode="Recycling"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <fl:ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Height="38">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="2*" />
+                                    <ColumnDefinition Width="3*" />
+                                    <ColumnDefinition Width="150" />
+                                    <ColumnDefinition Width="72" />
+                                    <ColumnDefinition Width="160" />
+                                </Grid.ColumnDefinitions>
+
+                                <TextBlock Grid.Column="0"
+                                           Text="{Binding Pinyin}"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding Text}"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="2"
+                                           Text="{Binding Source}"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Grid.Column="3"
+                                           Text="{Binding Position}"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+
+                                <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <fl:Button Content="编辑" Tag="{Binding}" Click="OnEditClick" Padding="8,2" MinWidth="40" />
+                                    <fl:Button Content="删除" Tag="{Binding}" Click="OnDeleteClick" Padding="8,2" MinWidth="40" Margin="6,0,0,0" />
+                                </StackPanel>
+                            </Grid>
+                        </DataTemplate>
+                    </fl:ListView.ItemTemplate>
+                </fl:ListView>
+
+                <TextBlock x:Name="EmptyText"
+                           Grid.Row="1"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Center"
+                           Visibility="Collapsed"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Text="还没有短语。采纳一个云词，或点「添加」手动加一条。" />
+            </Grid>
+
+            <StackPanel Grid.Row="3" Margin="0,12,0,0" MaxWidth="1100" HorizontalAlignment="Left">
+                <Border Background="{DynamicResource SurfaceBrush}"
+                        BorderBrush="{DynamicResource BorderBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{DynamicResource CardCornerRadius}"
+                        Padding="12"
+                        Visibility="Collapsed"
+                        x:Name="EditPanel">
+                    <StackPanel Orientation="Horizontal">
+                        <fl:TextBox x:Name="EditPinyinBox" Width="200" PlaceholderText="拼音，如 yisitalu" />
+                        <fl:TextBox x:Name="EditTextBox" Width="240" Margin="8,0,0,0" PlaceholderText="短语，如 伊斯塔露" />
+                        <TextBlock Text="位置"
+                                   VerticalAlignment="Center"
+                                   Margin="12,0,6,0"
+                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        <ComboBox x:Name="EditPositionBox"
+                                  Width="64"
+                                  ToolTip="写入文件的位置字段，1~9" />
+                        <fl:Button x:Name="EditConfirmButton" Content="保存" Appearance="Primary" Margin="12,0,0,0" Click="OnEditConfirmClick" />
+                        <fl:Button Content="取消" Margin="8,0,0,0" Click="OnEditCancelClick" />
+                    </StackPanel>
+                </Border>
+
+                <TextBlock x:Name="StatusText"
+                           Margin="0,6,0,0"
+                           TextWrapping="Wrap"
+                           MaxWidth="1100"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+
+                <TextBlock Margin="0,4,0,0"
+                           TextWrapping="Wrap"
+                           MaxWidth="1100"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Text="实测：写入不需要重启输入法，几秒后自动生效；输入法会把自定义短语排在原生候选第 1 位，「位置」值会被保存但当前版本不影响排序。" />
             </StackPanel>
         </Grid>
 
-        <Grid Grid.Row="3" Margin="0,14,0,0" MaxWidth="1100" HorizontalAlignment="Stretch">
+        <!-- ══════════ 自学习 ══════════ -->
+        <Grid x:Name="LearningView" Grid.Row="2" Margin="0,14,0,0" Visibility="Collapsed">
             <Grid.RowDefinitions>
-                <RowDefinition Height="28" />
+                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
+                <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <!-- 表头列宽必须与行模板完全一致，否则会错位。 -->
-            <Grid Grid.Row="0">
+            <Grid Grid.Row="0" MaxWidth="1100" HorizontalAlignment="Stretch">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="2*" />
-                    <ColumnDefinition Width="3*" />
-                    <ColumnDefinition Width="150" />
-                    <ColumnDefinition Width="72" />
-                    <ColumnDefinition Width="160" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Grid.Column="0" Text="拼音" Style="{StaticResource Hint}" />
-                <TextBlock Grid.Column="1" Text="短语" Style="{StaticResource Hint}" />
-                <TextBlock Grid.Column="2" Text="来源" Style="{StaticResource Hint}" />
-                <TextBlock Grid.Column="3" Text="位置" Style="{StaticResource Hint}" />
-                <TextBlock Grid.Column="4" Text="操作" Style="{StaticResource Hint}" />
+
+                <fl:TextBox x:Name="LearningSearchBox"
+                            Grid.Column="0"
+                            PlaceholderText="搜索学到的词或简拼"
+                            TextChanged="OnLearningSearchChanged" />
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="10,0,0,0">
+                    <fl:Button Content="刷新" Click="OnLearningRefreshClick" />
+                    <fl:Button Content="导出 CSV" Margin="8,0,0,0" Click="OnLearningExportClick" />
+                </StackPanel>
             </Grid>
 
-            <fl:ListView x:Name="RowsList"
-                         Grid.Row="1"
-                         VirtualizingPanel.IsVirtualizing="True"
-                         VirtualizingPanel.VirtualizationMode="Recycling"
-                         ScrollViewer.VerticalScrollBarVisibility="Auto"
-                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                <fl:ListView.ItemTemplate>
-                    <DataTemplate>
-                        <Grid Height="38">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="2*" />
-                                <ColumnDefinition Width="3*" />
-                                <ColumnDefinition Width="150" />
-                                <ColumnDefinition Width="72" />
-                                <ColumnDefinition Width="160" />
-                            </Grid.ColumnDefinitions>
+            <Grid Grid.Row="1" Margin="0,14,0,0" MaxWidth="1100" HorizontalAlignment="Stretch">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="28" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Column="0"
-                                       Text="{Binding Pinyin}"
-                                       VerticalAlignment="Center"
-                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Grid.Column="1"
-                                       Text="{Binding Text}"
-                                       VerticalAlignment="Center"
-                                       TextTrimming="CharacterEllipsis" />
-                            <TextBlock Grid.Column="2"
-                                       Text="{Binding Source}"
-                                       VerticalAlignment="Center"
-                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                            <TextBlock Grid.Column="3"
-                                       Text="{Binding Position}"
-                                       VerticalAlignment="Center"
-                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="3*" />
+                        <ColumnDefinition Width="3*" />
+                        <ColumnDefinition Width="140" />
+                        <ColumnDefinition Width="72" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="学到的词" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="1" Text="拼音（推断）" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="2" Text="简拼" Style="{StaticResource Hint}" />
+                    <TextBlock Grid.Column="3" Text="字数" Style="{StaticResource Hint}" />
+                </Grid>
 
-                            <StackPanel Grid.Column="4" Orientation="Horizontal" VerticalAlignment="Center">
-                                <fl:Button Content="编辑" Tag="{Binding}" Click="OnEditClick" Padding="8,2" MinWidth="40" />
-                                <fl:Button Content="删除" Tag="{Binding}" Click="OnDeleteClick" Padding="8,2" MinWidth="40" Margin="6,0,0,0" />
-                            </StackPanel>
-                        </Grid>
-                    </DataTemplate>
-                </fl:ListView.ItemTemplate>
-            </fl:ListView>
+                <fl:ListView x:Name="LearningList"
+                             Grid.Row="1"
+                             VirtualizingPanel.IsVirtualizing="True"
+                             VirtualizingPanel.VirtualizationMode="Recycling"
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <fl:ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Height="38">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="3*" />
+                                    <ColumnDefinition Width="3*" />
+                                    <ColumnDefinition Width="140" />
+                                    <ColumnDefinition Width="72" />
+                                </Grid.ColumnDefinitions>
 
-            <TextBlock x:Name="EmptyText"
-                       Grid.Row="1"
-                       VerticalAlignment="Center"
-                       HorizontalAlignment="Center"
-                       Visibility="Collapsed"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       Text="还没有短语。采纳一个云词，或点「添加」手动加一条。" />
+                                <TextBlock Grid.Column="0"
+                                           Text="{Binding Text}"
+                                           VerticalAlignment="Center"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding Pinyin}"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                           TextTrimming="CharacterEllipsis" />
+                                <TextBlock Grid.Column="2"
+                                           Text="{Binding Jianpin}"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Grid.Column="3"
+                                           Text="{Binding Length}"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            </Grid>
+                        </DataTemplate>
+                    </fl:ListView.ItemTemplate>
+                </fl:ListView>
+
+                <TextBlock x:Name="LearningEmptyText"
+                           Grid.Row="1"
+                           VerticalAlignment="Center"
+                           HorizontalAlignment="Center"
+                           Visibility="Collapsed"
+                           TextWrapping="Wrap"
+                           MaxWidth="620"
+                           TextAlignment="Center"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Text="输入法还没有自学习到任何词。先用微软拼音正常打一段字，它会在后台自己累积。" />
+            </Grid>
+
+            <StackPanel Grid.Row="2" Margin="0,12,0,0" MaxWidth="1100" HorizontalAlignment="Left">
+                <TextBlock x:Name="LearningStatusText"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                <TextBlock Margin="0,4,0,0"
+                           TextWrapping="Wrap"
+                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                           Text="这份数据由输入法自己维护，本程序只读不写。它只在打字时影响原生候选的排序；想固定成短语请到「自定义短语」添加。" />
+            </StackPanel>
         </Grid>
-
-        <StackPanel Grid.Row="4" Margin="0,12,0,0" MaxWidth="1100" HorizontalAlignment="Left">
-            <Border Background="{DynamicResource SurfaceBrush}"
-                    BorderBrush="{DynamicResource BorderBrush}"
-                    BorderThickness="1"
-                    CornerRadius="{DynamicResource CardCornerRadius}"
-                    Padding="12"
-                    Visibility="Collapsed"
-                    x:Name="EditPanel">
-                <StackPanel Orientation="Horizontal">
-                    <fl:TextBox x:Name="EditPinyinBox" Width="200" PlaceholderText="拼音，如 yisitalu" />
-                    <fl:TextBox x:Name="EditTextBox" Width="240" Margin="8,0,0,0" PlaceholderText="短语，如 伊斯塔露" />
-                    <fl:Button x:Name="EditConfirmButton" Content="保存" Appearance="Primary" Margin="8,0,0,0" Click="OnEditConfirmClick" />
-                    <fl:Button Content="取消" Margin="8,0,0,0" Click="OnEditCancelClick" />
-                </StackPanel>
-            </Border>
-
-            <TextBlock x:Name="StatusText"
-                       Margin="0,6,0,0"
-                       TextWrapping="Wrap"
-                       MaxWidth="1100"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-
-            <TextBlock Margin="0,4,0,0"
-                       TextWrapping="Wrap"
-                       MaxWidth="1100"
-                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                       Text="实测：写入不需要重启输入法，几秒后自动生效；输入法会把自定义短语排在原生候选第 1 位，「位置」值目前不影响顺序。" />
-        </StackPanel>
     </Grid>
 </Page>

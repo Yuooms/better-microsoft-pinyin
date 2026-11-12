@@ -75,14 +75,15 @@ internal static class CoreTests
 {
     public static void RunAll()
     {
-        Run("[1/8] Bing 响应解析", Parser);
-        Run("[2/8] 候选清洗", Sanitizer);
-        Run("[3/8] 拼音匹配", Matcher);
-        Run("[4/8] 严格 / 扩展分区", Selector);
-        Run("[5/8] 排序合并（旧链路）", Ranker);
-        Run("[6/8] 设置持久化", Settings);
-        Run("[7/8] 词库词表", Catalog);
-        Run("[8/8] 用户词库", Wordbook);
+        Run("[1/9] Bing 响应解析", Parser);
+        Run("[2/9] 候选清洗", Sanitizer);
+        Run("[3/9] 拼音匹配", Matcher);
+        Run("[4/9] 严格 / 扩展分区", Selector);
+        Run("[5/9] 排序合并（旧链路）", Ranker);
+        Run("[6/9] 设置持久化", Settings);
+        Run("[7/9] 词库词表", Catalog);
+        Run("[8/9] 用户词库", Wordbook);
+        Run("[9/9] 自学习词库", Learning);
     }
 
     /// <summary>逐组执行，一组崩掉不影响其它组出结论。</summary>
@@ -322,6 +323,89 @@ internal static class CoreTests
                 File.Delete(broken);
             }
         }
+    }
+
+    /// <summary>自学习词库（ChsPinyinUDL.dat）的解析、拼音推断与导出。</summary>
+    private static void Learning()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), $"bp-learn-{Guid.NewGuid():N}");
+        var path = Path.Combine(directory, "ChsPinyinUDL.dat");
+        Directory.CreateDirectory(directory);
+        try
+        {
+            // 第三条故意标成空槽（0xAA），读取时应当被跳过。
+            var data = BuildLearningFile(
+                ("伊斯塔露", "yst", 4),
+                ("若娜瓦", "rnw", 3),
+                ("多余词", "dyc", 3));
+            data[0x2400 + (2 * 60) + 11] = 0xAA;
+            File.WriteAllBytes(path, data);
+
+            var store = new MspyLearningStore(path);
+            Check.True(store.TryRead(out var words, out var error), $"应能读出：{error}");
+            Check.Equal(2, words.Count, "空槽应被跳过");
+            Check.Equal("伊斯塔露", words[0].Text, "首条词面");
+            Check.Equal("yst", words[0].Jianpin, "简拼");
+            Check.Equal(4, words[0].Length, "字数");
+
+            var lexicon = FakeLexicon.Create();
+            Check.Equal(
+                "yisitalu",
+                MspyLearningStore.ResolvePinyin("伊斯塔露", "yst", lexicon),
+                "拼音应按简拼首字母消歧");
+            Check.Equal(
+                "ruonawa",
+                MspyLearningStore.ResolvePinyin("若娜瓦", "rnw", lexicon),
+                "第二条拼音");
+
+            // 文件头不对必须整份拒绝，而不是读出一堆乱码。
+            var brokenPath = Path.Combine(directory, "broken.dat");
+            File.WriteAllBytes(brokenPath, new byte[0x2400]);
+            Check.False(new MspyLearningStore(brokenPath).TryRead(out _, out var brokenError), "空文件应被拒绝");
+            Check.True(brokenError is not null, "拒绝时应给出原因");
+
+            // 记录数超出文件容量同样拒绝，避免越界读。
+            var oversized = BuildLearningFile(("伊斯塔露", "yst", 4));
+            BitConverter.GetBytes(99u).CopyTo(oversized, 0x0C);
+            File.WriteAllBytes(brokenPath, oversized);
+            Check.False(new MspyLearningStore(brokenPath).TryRead(out _, out _), "记录数越界应拒绝");
+
+            var csvPath = Path.Combine(directory, "learned.csv");
+            Check.True(MspyLearningStore.ExportCsv(words, csvPath, lexicon), "导出 CSV");
+            var lines = File.ReadAllLines(csvPath);
+            Check.Equal(3, lines.Length, "CSV 应为表头 + 两条");
+            Check.True(lines[1].Contains("伊斯塔露,yisitalu", StringComparison.Ordinal), "CSV 第一行内容");
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>拼一个只有头部与若干条记录的自学习词库文件。</summary>
+    private static byte[] BuildLearningFile(params (string Text, string Jianpin, int Length)[] entries)
+    {
+        var data = new byte[0x2400 + (entries.Length * 60)];
+        new byte[] { 0x55, 0xAA, 0x88, 0x81 }.CopyTo(data, 0);
+        new byte[] { 0x02, 0x00, 0x60, 0x00 }.CopyTo(data, 4);
+        new byte[] { 0x55, 0xAA, 0x55, 0xAA }.CopyTo(data, 8);
+        BitConverter.GetBytes((uint)entries.Length).CopyTo(data, 0x0C);
+
+        for (var i = 0; i < entries.Length; i++)
+        {
+            var (text, jianpin, length) = entries[i];
+            var offset = 0x2400 + (i * 60);
+            System.Text.Encoding.ASCII.GetBytes(jianpin).CopyTo(data, offset + 4);
+            data[offset + 9] = 0x04;
+            data[offset + 10] = (byte)length;
+            data[offset + 11] = 0x5A;
+            System.Text.Encoding.Unicode.GetBytes(text).CopyTo(data, offset + 12);
+        }
+
+        return data;
     }
 
     private static void Parser()

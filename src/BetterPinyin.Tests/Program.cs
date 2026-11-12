@@ -4,6 +4,7 @@ using BetterPinyin.Core.Cloud;
 using BetterPinyin.Core.Lexicon;
 using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Ranking;
+using BetterPinyin.Core.Wordbook;
 
 namespace BetterPinyin.Tests;
 
@@ -37,6 +38,11 @@ internal static class Program
             return UdpSpike.Run(args);
         }
 
+        if (args.Any(a => a.Equals("--learned", StringComparison.OrdinalIgnoreCase)))
+        {
+            return LearnedDump(args, lexicon);
+        }
+
         try
         {
             CoreTests.RunAll();
@@ -58,6 +64,44 @@ internal static class Program
     }
 
     /// <summary>对一组候选分别打印匹配结果与分区结果，用于手工核对边界。</summary>
+    /// <summary>打印微软拼音自学习词库的解析结果，只读，不写入。</summary>
+    private static int LearnedDump(string[] args, IPinyinLexicon lexicon)
+    {
+        var store = new MspyLearningStore();
+        Console.WriteLine($"文件：{store.FilePath}");
+
+        if (!store.Exists)
+        {
+            Console.WriteLine("尚未生成（输入法还没学到任何词）。");
+            return 1;
+        }
+
+        if (!store.TryRead(out var words, out var error))
+        {
+            Console.WriteLine($"读取失败：{error}");
+            return 1;
+        }
+
+        var filter = args.FirstOrDefault(a => !a.StartsWith("--", StringComparison.Ordinal));
+        var shown = filter is null
+            ? words
+            : words.Where(w => w.Text.Contains(filter, StringComparison.Ordinal)).ToList();
+
+        Console.WriteLine($"共 {words.Count} 条（只读解析），显示 {shown.Count} 条\n");
+        foreach (var word in shown.Take(40))
+        {
+            var pinyin = MspyLearningStore.ResolvePinyin(word.Text, word.Jianpin, lexicon);
+            Console.WriteLine($"  {word.Text,-8} {pinyin,-26} {word.Jianpin}");
+        }
+
+        if (shown.Count > 40)
+        {
+            Console.WriteLine($"  … 其余 {shown.Count - 40} 条");
+        }
+
+        return 0;
+    }
+
     private static void Probe(string[] args, IPinyinLexicon lexicon)
     {
         var query = args.FirstOrDefault(a =>

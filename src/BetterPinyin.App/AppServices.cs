@@ -51,6 +51,9 @@ internal static class AppServices
     /// <summary>微软拼音自定义短语的读写器。</summary>
     public static MspyPhraseStore Phrases { get; } = new();
 
+    /// <summary>微软拼音自学习词库的只读读取器。</summary>
+    public static MspyLearningStore Learning { get; } = new();
+
     /// <summary>串行化短语文件的写入，避免多次采纳并发改同一个文件。</summary>
     private static readonly object PhraseGate = new();
 
