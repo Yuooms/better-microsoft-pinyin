@@ -231,8 +231,14 @@ public sealed class MspyPhraseStore
         return Write(map.Values);
     }
 
-    /// <summary>导出成系统设置可导入的 TXT（每行「拼音 TAB 短语」）。</summary>
-    /// <param name="path">目标路径。</param>
+    /// <summary>
+    /// 用给定列表整体替换文件内容（用于删除、编辑后重写）。
+    /// </summary>
+    /// <param name="phrases">完整的新列表。</param>
+    /// <returns>成功返回 true。</returns>
+    public bool ReplaceAll(IEnumerable<MspyPhrase> phrases) => Write(phrases);
+
+    /// <summary>导出成系统设置可导入的 TXT（每行「拼音 TAB 短语」）。</summary>    /// <param name="path">目标路径。</param>
     /// <returns>成功返回 true。</returns>
     public bool ExportText(string path)
     {

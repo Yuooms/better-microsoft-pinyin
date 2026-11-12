@@ -51,8 +51,12 @@ public sealed class AppSettings
     /// <summary>用户词库整词命中时是否跳过联网，直接出词。</summary>
     public bool WordbookLocalFirst { get; set; } = true;
 
-    /// <summary>是否在键盘空闲时自动把待同步的词写入微软拼音自定义短语。</summary>
-    public bool WordbookAutoSync { get; set; }
+    /// <summary>采纳云词后是否立即写进微软拼音的自定义短语。</summary>
+    /// <remarks>
+    /// 换过名字（旧值 <c>WordbookAutoSync</c> 默认关，导致功能不可见）。
+    /// 新键在旧配置里不存在，因此升级后按默认值 true 生效。
+    /// </remarks>
+    public bool PhraseAutoWrite { get; set; } = true;
 
     /// <summary>写入微软拼音时的默认候选位置（1~9）。</summary>
     public int WordbookSyncPosition { get; set; } = 2;

@@ -641,6 +641,18 @@ internal sealed class CloudAssistController : IDisposable
         if (AppServices.Wordbook.Learn(text, pinyin, query, out var word))
         {
             Report($"已记入词库：{word.Text}（{word.Pinyin}，第 {word.Hits} 次）");
+
+            // 立即写进微软拼音的自定义短语：这是用户唯一能「看见」效果的地方
+            // （几秒后原生候选里就有这个词）。写失败只记日志，不影响已上屏的内容。
+            if (_settings.PhraseAutoWrite)
+            {
+                var position = Math.Clamp(_settings.WordbookSyncPosition, 1, 9);
+                if (AppServices.TryWritePhrase(word.Pinyin, word.Text, position))
+                {
+                    AppServices.Wordbook.SetUdpState(word.Text, UdpSyncState.Synced);
+                    Report($"已写入微软拼音自定义短语：{word.Text}");
+                }
+            }
         }
     }
 

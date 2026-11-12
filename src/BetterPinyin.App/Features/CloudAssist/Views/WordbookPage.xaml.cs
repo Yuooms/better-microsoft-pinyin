@@ -2,106 +2,115 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Threading;
-using BetterPinyin.Core.Lexicon;
 using BetterPinyin.Core.Wordbook;
 using Microsoft.Win32;
 
 namespace BetterPinyin.App.Features.CloudAssist.Views;
 
 /// <summary>
-/// 词库管理页：搜索、筛选、调权重、遗忘、手动添加、同步到微软拼音。
+/// 词库页：直接管理微软拼音的「用户定义的短语」。
 /// </summary>
 /// <remarks>
-/// 页面实例被 <c>SettingsPageProvider</c> 永久缓存，所以 <c>Loaded</c> 会触发多次：
-/// 只有第一次读设置，之后只刷新列表。事件订阅必须在 <c>Unloaded</c> 退订。
+/// <para>
+/// 早期版本这一页展示的是本程序自己的词库（内置 15 万词 + 用户词 + 权重），
+/// 但那些调整只影响我们的浮窗排序，用户在输入法里看不到任何变化，
+/// 也就无法判断功能到底有没有生效。现在改成直接读写
+/// <c>ChsPinyinEUDPv1.lex</c>：改完打拼音就能在原生候选里看到。
+/// </para>
+/// <para>
+/// 页面实例被 <c>SettingsPageProvider</c> 永久缓存，<c>Loaded</c> 会触发多次，
+/// 所以只在第一次读设置，之后只刷新列表。
+/// </para>
 /// </remarks>
 public partial class WordbookPage : Page
 {
-    private const int PageSize = 200;
-    private const int MaxRows = 2000;
-
-    private readonly ObservableCollection<WordbookRow> _rows = new();
-    private readonly DispatcherTimer _searchTimer;
+    private readonly ObservableCollection<PhraseRow> _rows = new();
 
     private bool _initialized;
-    private string _query = string.Empty;
-    private string _filter = "All";
+    private EditMode _mode = EditMode.None;
+    private string? _editingPinyin;
 
-    private IReadOnlyList<int> _matches = Array.Empty<int>();
-    private int _matchCursor;
-    private bool _loading;
+    /// <summary>编辑面板当前是新增还是修改。</summary>
+    private enum EditMode
+    {
+        None,
+        Add,
+        Update,
+    }
 
-    /// <summary>创建词库页。</summary>
+    /// <summary>构造页面。</summary>
     public WordbookPage()
     {
         InitializeComponent();
-
         RowsList.ItemsSource = _rows;
-        RowsList.AddHandler(
-            ScrollViewer.ScrollChangedEvent,
-            new ScrollChangedEventHandler(OnListScrollChanged));
-
-        _searchTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
-        _searchTimer.Tick += (_, _) =>
-        {
-            _searchTimer.Stop();
-            Reload();
-        };
-
         Loaded += OnLoaded;
-        Unloaded += OnUnloaded;
     }
-
-    private static UserWordbook Book => AppServices.Wordbook;
-
-    private static IWordCatalog Catalog => (IWordCatalog)AppServices.Lexicon;
 
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
-        if (!_initialized)
+        if (_initialized)
         {
-            _initialized = true;
-            LearnToggle.IsChecked = AppServices.Settings.WordbookLearnOnAccept;
-            LocalFirstToggle.IsChecked = AppServices.Settings.WordbookLocalFirst;
-            AutoSyncToggle.IsChecked = AppServices.Settings.WordbookAutoSync;
             Reload();
+            return;
         }
 
-        Book.Changed -= OnBookChanged;
-        Book.Changed += OnBookChanged;
+        _initialized = true;
+        AutoWriteToggle.IsChecked = AppServices.Settings.PhraseAutoWrite;
+        LocalFirstToggle.IsChecked = AppServices.Settings.WordbookLocalFirst;
+        Reload();
     }
 
-    private void OnUnloaded(object sender, RoutedEventArgs e) => Book.Changed -= OnBookChanged;
+    // ── 数据加载 ──────────────────────────────────────────────
 
-    private void OnBookChanged(object? sender, EventArgs e)
+    private void Reload()
     {
-        // 采纳线程也会触发；只刷新统计，不重排列表，避免用户正在看的时候列表跳动。
-        Dispatcher.BeginInvoke(new Action(RefreshCount));
+        var phrases = AppServices.Phrases.Read(out var error);
+        var learned = AppServices.Wordbook.Words
+            .Select(w => (w.Pinyin, w.Text))
+            .ToHashSet();
+
+        _rows.Clear();
+        foreach (var phrase in phrases.OrderBy(p => p.Pinyin, StringComparer.Ordinal))
+        {
+            var source = learned.Contains((phrase.Pinyin, phrase.Text)) ? "学习" : "手动";
+            _rows.Add(new PhraseRow(phrase.Pinyin, phrase.Text, source, phrase.Position));
+        }
+
+        ApplyFilter();
+        UpdateStatus(error);
     }
+
+    private void ApplyFilter()
+    {
+        var query = SearchBox.Text?.Trim() ?? string.Empty;
+        var visible = _rows
+            .Where(r => query.Length == 0 ||
+                        r.Pinyin.Contains(query, StringComparison.OrdinalIgnoreCase) ||
+                        r.Text.Contains(query, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        RowsList.ItemsSource = visible;
+        EmptyText.Visibility = visible.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private void UpdateStatus(string? error)
+    {
+        StatusText.Text = error is null
+            ? $"共 {_rows.Count} 条 · {AppServices.Phrases.FilePath}"
+            : $"共 {_rows.Count} 条 · 读取有问题：{error}";
+    }
+
+    // ── 交互 ──────────────────────────────────────────────────
 
     private void OnSearchChanged(object sender, TextChangedEventArgs e)
     {
-        if (!_initialized)
+        if (_initialized)
         {
-            return;
+            ApplyFilter();
         }
-
-        _query = SearchBox.Text?.Trim() ?? string.Empty;
-        _searchTimer.Stop();
-        _searchTimer.Start();
     }
 
-    private void OnFilterChanged(object sender, SelectionChangedEventArgs e)
-    {
-        if (!_initialized)
-        {
-            return;
-        }
-
-        _filter = (FilterBox.SelectedItem as ComboBoxItem)?.Tag as string ?? "All";
-        Reload();
-    }
+    private void OnRefreshClick(object sender, RoutedEventArgs e) => Reload();
 
     private void OnToggleChanged(object sender, RoutedEventArgs e)
     {
@@ -110,308 +119,127 @@ public partial class WordbookPage : Page
             return;
         }
 
-        AppServices.Settings.WordbookLearnOnAccept = LearnToggle.IsChecked == true;
+        AppServices.Settings.PhraseAutoWrite = AutoWriteToggle.IsChecked == true;
         AppServices.Settings.WordbookLocalFirst = LocalFirstToggle.IsChecked == true;
-        AppServices.Settings.WordbookAutoSync = AutoSyncToggle.IsChecked == true;
         AppServices.SaveSettings();
     }
 
-    /// <summary>重建列表：先用户词，再内置词的第一页。</summary>
-    private void Reload()
+    private void OnAddClick(object sender, RoutedEventArgs e) => ShowEditor(EditMode.Add, null);
+
+    private void OnEditClick(object sender, RoutedEventArgs e)
     {
-        _loading = true;
-        try
+        if ((sender as FrameworkElement)?.Tag is PhraseRow row)
         {
-            _rows.Clear();
-            _matches = Catalog.Search(_query, 5000);
-            _matchCursor = 0;
-
-            foreach (var word in Book.Words)
-            {
-                if (!UserMatches(word) || !PassesFilter(word.Adjustment, isUser: true, word.UdpState))
-                {
-                    continue;
-                }
-
-                _rows.Add(new WordbookRow(
-                    word.Text,
-                    word.Pinyin,
-                    IsUser: true,
-                    Rank: -1,
-                    word.Hits,
-                    word.Adjustment,
-                    word.UdpState));
-            }
-
-            AppendBuiltin(PageSize);
-        }
-        finally
-        {
-            _loading = false;
-        }
-
-        RefreshCount();
-    }
-
-    private void AppendBuiltin(int count)
-    {
-        var added = 0;
-        while (added < count && _matchCursor < _matches.Count && _rows.Count < MaxRows)
-        {
-            var index = _matches[_matchCursor++];
-            if (!Catalog.TryGet(index, out var entry))
-            {
-                continue;
-            }
-
-            var adjustment = Book.AdjustmentOf(entry.Text);
-            if (!PassesFilter(adjustment, isUser: false, UdpSyncState.Pending))
-            {
-                continue;
-            }
-
-            _rows.Add(new WordbookRow(
-                entry.Text,
-                entry.Pinyin,
-                IsUser: false,
-                entry.Index,
-                Hits: 0,
-                adjustment,
-                UdpSyncState.Pending));
-            added++;
+            ShowEditor(EditMode.Update, row);
         }
     }
 
-    private bool PassesFilter(WordAdjustment adjustment, bool isUser, UdpSyncState sync) => _filter switch
+    private void ShowEditor(EditMode mode, PhraseRow? row)
     {
-        "User" => isUser,
-        "Boosted" => adjustment == WordAdjustment.Boosted,
-        "Reduced" => adjustment == WordAdjustment.Reduced,
-        "Hidden" => adjustment == WordAdjustment.Hidden,
-        "Pending" => isUser && sync != UdpSyncState.Synced,
-        _ => true,
-    };
-
-    private bool UserMatches(UserWord word)
-    {
-        if (_query.Length == 0)
-        {
-            return true;
-        }
-
-        if (word.Text.Contains(_query, StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        return IsAscii(_query) &&
-               (word.Pinyin.StartsWith(_query, StringComparison.OrdinalIgnoreCase) ||
-                word.Initials.StartsWith(_query, StringComparison.OrdinalIgnoreCase));
+        _mode = mode;
+        _editingPinyin = row?.Pinyin;
+        EditPinyinBox.Text = row?.Pinyin ?? string.Empty;
+        EditTextBox.Text = row?.Text ?? string.Empty;
+        EditConfirmButton.Content = mode == EditMode.Update ? "保存" : "添加";
+        EditPanel.Visibility = Visibility.Visible;
+        EditPinyinBox.Focus();
     }
 
-    private void OnListScrollChanged(object sender, ScrollChangedEventArgs e)
+    private void OnEditCancelClick(object sender, RoutedEventArgs e)
     {
-        if (_loading || e.OriginalSource is not ScrollViewer)
+        _mode = EditMode.None;
+        _editingPinyin = null;
+        EditPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnEditConfirmClick(object sender, RoutedEventArgs e)
+    {
+        var pinyin = EditPinyinBox.Text.Trim().ToLowerInvariant();
+        var text = EditTextBox.Text.Trim();
+
+        if (!IsValidPinyin(pinyin))
         {
+            StatusText.Text = "拼音只能由小写字母组成，例如 yisitalu。";
             return;
         }
 
-        if (e.ExtentHeight - e.VerticalOffset - e.ViewportHeight > 6)
+        if (text.Length == 0)
         {
+            StatusText.Text = "短语不能为空。";
             return;
         }
 
-        if (_rows.Count >= MaxRows)
+        var phrases = AppServices.Phrases.Read(out _).ToList();
+
+        // 改拼音等于换一条记录：先把旧的删掉，避免留下死条目。
+        if (_mode == EditMode.Update && _editingPinyin is not null &&
+            !string.Equals(_editingPinyin, pinyin, StringComparison.OrdinalIgnoreCase))
         {
-            StatusText.Text = $"结果过多，只显示前 {MaxRows} 条，请细化搜索。";
+            phrases.RemoveAll(p => string.Equals(p.Pinyin, _editingPinyin, StringComparison.OrdinalIgnoreCase));
+        }
+
+        var existing = phrases.FindIndex(p => string.Equals(p.Pinyin, pinyin, StringComparison.OrdinalIgnoreCase));
+        var position = existing >= 0
+            ? phrases[existing].Position
+            : Math.Clamp(AppServices.Settings.WordbookSyncPosition, 1, 9);
+
+        var phrase = new MspyPhrase(pinyin, position, text);
+        if (existing >= 0)
+        {
+            phrases[existing] = phrase;
+        }
+        else
+        {
+            phrases.Add(phrase);
+        }
+
+        if (!AppServices.Phrases.ReplaceAll(phrases))
+        {
+            StatusText.Text = $"写入失败：{AppServices.Phrases.LastError}";
             return;
         }
 
-        AppendBuiltin(PageSize);
-        RefreshCount();
-    }
-
-    private void RefreshCount()
-    {
-        var total = Book.Count;
-        var hidden = Book.Words.Count(w => w.IsHidden) +
-                     Book.Overrides.Count(o => o.Adjustment == WordAdjustment.Hidden);
-        var pending = Book.Words.Count(w => w.UdpState != UdpSyncState.Synced);
-        CountText.Text = $"我的 {total} · 已遗忘 {hidden} · 待同步 {pending} · 显示 {_rows.Count}";
-    }
-
-    private void OnBoostClick(object sender, RoutedEventArgs e) => Adjust(sender, WordAdjustment.Boosted);
-
-    private void OnReduceClick(object sender, RoutedEventArgs e) => Adjust(sender, WordAdjustment.Reduced);
-
-    private void OnHideClick(object sender, RoutedEventArgs e)
-    {
-        if (sender is not Button { Tag: WordbookRow row })
-        {
-            return;
-        }
-
-        var target = row.Adjustment == WordAdjustment.Hidden
-            ? WordAdjustment.Normal
-            : WordAdjustment.Hidden;
-        Adjust(sender, target);
-    }
-
-    private void Adjust(object sender, WordAdjustment adjustment)
-    {
-        if (sender is not Button { Tag: WordbookRow row })
-        {
-            return;
-        }
-
-        Book.SetAdjustment(row.Text, row.Pinyin, adjustment);
-        ReplaceRow(row.Text);
-        RefreshCount();
-        StatusText.Text = $"{row.Text} → {Describe(adjustment)}";
-    }
-
-    private void ReplaceRow(string text)
-    {
-        for (var i = 0; i < _rows.Count; i++)
-        {
-            if (!string.Equals(_rows[i].Text, text, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
-            var row = _rows[i];
-            var word = Book.Words.FirstOrDefault(w => string.Equals(w.Text, text, StringComparison.Ordinal));
-            _rows[i] = row with
-            {
-                Adjustment = Book.AdjustmentOf(text),
-                SyncState = word?.UdpState ?? row.SyncState,
-                Hits = word?.Hits ?? row.Hits,
-            };
-            return;
-        }
-    }
-
-    private static string Describe(WordAdjustment adjustment) => adjustment switch
-    {
-        WordAdjustment.Boosted => "已提升",
-        WordAdjustment.Reduced => "已降低",
-        WordAdjustment.Hidden => "已遗忘",
-        _ => "已恢复默认",
-    };
-
-    private void OnAddClick(object sender, RoutedEventArgs e)
-    {
-        AddPanel.Visibility = Visibility.Visible;
-        AddPositionBox.Text = AppServices.Settings.WordbookSyncPosition.ToString();
-        AddWordBox.Focus();
-    }
-
-    private void OnAddCancelClick(object sender, RoutedEventArgs e) => AddPanel.Visibility = Visibility.Collapsed;
-
-    private void OnAddConfirmClick(object sender, RoutedEventArgs e)
-    {
-        var text = AddWordBox.Text?.Trim() ?? string.Empty;
-        var pinyin = AddPinyinBox.Text?.Trim().ToLowerInvariant() ?? string.Empty;
-
-        if (!Book.Learn(text, pinyin, pinyin, out var word))
-        {
-            StatusText.Text = "添加失败：词要是 2~8 个汉字，拼音要能完整切分（如 yisitalu）。";
-            return;
-        }
-
-        if (int.TryParse(AddPositionBox.Text, out var position))
-        {
-            Book.SetUdpPosition(text, position);
-        }
-
-        AddPanel.Visibility = Visibility.Collapsed;
-        AddWordBox.Text = string.Empty;
-        AddPinyinBox.Text = string.Empty;
+        OnEditCancelClick(sender, e);
         Reload();
-        StatusText.Text = $"已添加 {word.Text}（{word.Pinyin}）";
+        StatusText.Text = $"已保存「{text}」（{pinyin}），几秒后即可在原生候选里看到。";
     }
 
-    private void OnSyncClick(object sender, RoutedEventArgs e)
+    private void OnDeleteClick(object sender, RoutedEventArgs e)
     {
-        var pending = Book.Words.Where(w => w.UdpState != UdpSyncState.Synced).ToList();
-        if (pending.Count == 0)
+        if ((sender as FrameworkElement)?.Tag is not PhraseRow row)
         {
-            StatusText.Text = "没有待同步的词。";
             return;
         }
 
-        var store = new MspyPhraseStore();
-        var defaultPosition = Math.Clamp(AppServices.Settings.WordbookSyncPosition, 1, 9);
-        var phrases = pending.Select(w => new MspyPhrase(
-            w.Pinyin,
-            w.UdpPosition == 0 ? defaultPosition : w.UdpPosition,
-            w.Text));
+        var phrases = AppServices.Phrases.Read(out _)
+            .Where(p => !string.Equals(p.Pinyin, row.Pinyin, StringComparison.OrdinalIgnoreCase))
+            .ToList();
 
-        if (!store.Merge(phrases, overwriteOthers: false, out var conflicts))
+        if (!AppServices.Phrases.ReplaceAll(phrases))
         {
-            foreach (var word in pending)
-            {
-                Book.SetUdpState(word.Text, UdpSyncState.Failed);
-            }
-
-            StatusText.Text = $"写入失败：{store.LastError}。可先用「导出」生成文本，再从系统设置导入。";
-            Reload();
+            StatusText.Text = $"删除失败：{AppServices.Phrases.LastError}";
             return;
-        }
-
-        var conflictPinyin = new HashSet<string>(conflicts.Select(c => c.Pinyin), StringComparer.OrdinalIgnoreCase);
-        var written = 0;
-        foreach (var word in pending)
-        {
-            if (conflictPinyin.Contains(word.Pinyin))
-            {
-                Book.SetUdpState(word.Text, UdpSyncState.Conflict);
-            }
-            else
-            {
-                Book.SetUdpState(word.Text, UdpSyncState.Synced);
-                written++;
-            }
         }
 
         Reload();
-        StatusText.Text = conflicts.Count == 0
-            ? $"已写入 {written} 条。切换一次输入法或重启后生效。"
-            : $"已写入 {written} 条，{conflicts.Count} 条与已有短语冲突未覆盖。";
+        StatusText.Text = $"已删除「{row.Text}」（{row.Pinyin}）。";
     }
 
-    private void OnExportClick(object sender, RoutedEventArgs e)
+    private void OnImportLearnedClick(object sender, RoutedEventArgs e)
     {
-        var dialog = new SaveFileDialog
-        {
-            Title = "导出词库",
-            Filter = "文本文件|*.txt",
-            FileName = "better-pinyin-words.txt",
-        };
-
-        if (dialog.ShowDialog() != true)
-        {
-            return;
-        }
-
-        try
-        {
-            var lines = Book.Words.Select(w => $"{w.Pinyin}\t{w.Text}");
-            File.WriteAllLines(dialog.FileName, lines);
-            StatusText.Text = $"已导出 {Book.Count} 条到 {dialog.FileName}";
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            StatusText.Text = $"导出失败：{ex.Message}";
-        }
+        var count = AppServices.SyncPendingPhrases();
+        Reload();
+        StatusText.Text = count > 0
+            ? $"已从学习记录导入 {count} 条。"
+            : "学习记录里没有待导入的词（可能都已写入，或与现有短语冲突）。";
     }
 
     private void OnImportClick(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog
         {
-            Title = "导入词库",
-            Filter = "文本文件|*.txt",
+            Title = "导入自定义短语",
+            Filter = "文本文件 (*.txt)|*.txt|所有文件 (*.*)|*.*",
         };
 
         if (dialog.ShowDialog() != true)
@@ -419,35 +247,89 @@ public partial class WordbookPage : Page
             return;
         }
 
+        var phrases = AppServices.Phrases.Read(out _).ToList();
         var added = 0;
+
         foreach (var line in File.ReadAllLines(dialog.FileName))
         {
-            var parts = line.Split('\t');
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0 || trimmed.StartsWith('#'))
+            {
+                continue;
+            }
+
+            var parts = trimmed.Split('\t', StringSplitOptions.RemoveEmptyEntries);
+            if (parts.Length < 2)
+            {
+                parts = trimmed.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+            }
+
             if (parts.Length < 2)
             {
                 continue;
             }
 
-            if (Book.Learn(parts[1].Trim(), parts[0].Trim().ToLowerInvariant(), parts[0].Trim(), out _))
+            var pinyin = parts[0].Trim().ToLowerInvariant();
+            var text = parts[1].Trim();
+            if (!IsValidPinyin(pinyin) || text.Length == 0)
             {
-                added++;
+                continue;
             }
+
+            var index = phrases.FindIndex(p => string.Equals(p.Pinyin, pinyin, StringComparison.OrdinalIgnoreCase));
+            var position = index >= 0
+                ? phrases[index].Position
+                : Math.Clamp(AppServices.Settings.WordbookSyncPosition, 1, 9);
+
+            var phrase = new MspyPhrase(pinyin, position, text);
+            if (index >= 0)
+            {
+                phrases[index] = phrase;
+            }
+            else
+            {
+                phrases.Add(phrase);
+            }
+
+            added++;
+        }
+
+        if (added == 0)
+        {
+            StatusText.Text = "文件里没有可识别的行（每行格式：拼音 + Tab + 短语）。";
+            return;
+        }
+
+        if (!AppServices.Phrases.ReplaceAll(phrases))
+        {
+            StatusText.Text = $"导入失败：{AppServices.Phrases.LastError}";
+            return;
         }
 
         Reload();
         StatusText.Text = $"已导入 {added} 条。";
     }
 
-    private static bool IsAscii(string value)
+    private void OnExportClick(object sender, RoutedEventArgs e)
     {
-        foreach (var ch in value)
+        var dialog = new SaveFileDialog
         {
-            if (ch is not ((>= 'a' and <= 'z') or (>= 'A' and <= 'Z')))
-            {
-                return false;
-            }
+            Title = "导出自定义短语",
+            Filter = "文本文件 (*.txt)|*.txt",
+            FileName = "mspy-phrases.txt",
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
         }
 
-        return true;
+        StatusText.Text = AppServices.Phrases.ExportText(dialog.FileName)
+            ? $"已导出到 {dialog.FileName}"
+            : $"导出失败：{AppServices.Phrases.LastError}";
     }
+
+    /// <summary>拼音只允许小写字母，与输入法的触发码一致。</summary>
+    private static bool IsValidPinyin(string value) =>
+        value.Length is > 0 and <= 64 && value.All(c => c is >= 'a' and <= 'z');
 }

@@ -1,6 +1,7 @@
 using System.Windows;
 using BetterPinyin.Core.Features;
 using BetterPinyin.Core.Settings;
+using BetterPinyin.Core.Wordbook;
 
 namespace BetterPinyin.App.Features.CloudAssist;
 
@@ -61,6 +62,13 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
         _controller.Start();
 
         AppServices.Controller = _controller;
+
+        // 升级前学到的词还停在「待同步」，这里补一次；失败只记日志，下次采纳还会重试。
+        if (_settings.PhraseAutoWrite && AppServices.Wordbook.Words.Any(w => w.UdpState == UdpSyncState.Pending))
+        {
+            _ = Task.Run(AppServices.SyncPendingPhrases);
+        }
+
         return Task.CompletedTask;
     }
 
