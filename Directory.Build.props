@@ -10,8 +10,8 @@
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <Product>Better Microsoft Pinyin</Product>
-    <Company>Better Microsoft Pinyin Project</Company>
-    <Copyright>Copyright (c) Better Microsoft Pinyin contributors</Copyright>
+    <Company>Yuooms</Company>
+    <Copyright>Copyright (c) 2026 Yuooms</Copyright>
     <Version>0.1.0</Version>
     <NeutralLanguage>zh-Hans</NeutralLanguage>
   </PropertyGroup>

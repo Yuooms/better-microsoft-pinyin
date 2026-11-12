@@ -6,6 +6,13 @@
   <img src="assets/brand/logo1.png" width="200" alt="Better Microsoft Pinyin 应用图标">
 </p>
 
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2010%2B%20x64-0078D6.svg" alt="Platform: Windows 10+ x64">
+  <img src="https://img.shields.io/badge/.NET-8.0-512BD4.svg" alt=".NET 8">
+  <a href="https://github.com/Yuooms"><img src="https://img.shields.io/badge/author-Yuooms-181717.svg" alt="Author: Yuooms"></a>
+</p>
+
 给 Windows 自带的**微软拼音**补上云联想：输入词库里没有的词（游戏角色名、专有名词、新词）时，从 Bing 搜索建议取回候选，显示在候选条旁边，按一下采纳键即可上屏。
 
 不替换输入法、不注入进程、不修改微软拼音本体。原有候选、快捷键、自学习行为完全不变；关掉本程序，一切恢复原状。
@@ -121,6 +128,12 @@ docs/                        架构、开发、扩展、排障、词库、路线
 - [排障指南](docs/TROUBLESHOOTING.md)
 - [路线图](docs/ROADMAP.md)
 
-## 许可
+## 作者
 
-[MIT](LICENSE)。运行期依赖 WPF-UI（MIT）；内置词库的数据来源与许可见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
+由 [Yuooms](https://github.com/Yuooms) 开发与维护。问题、建议或新词需求欢迎在 GitHub 提 Issue。
+
+## 开源协议
+
+[MIT](LICENSE)，Copyright (c) 2026 Yuooms。可自由使用、修改与再分发，请保留版权与许可声明。
+
+运行期依赖 WPF-UI（MIT）；内置词库的数据来源与许可见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
