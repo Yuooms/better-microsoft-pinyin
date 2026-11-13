@@ -49,10 +49,19 @@
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
 
-            <StackPanel Grid.Row="0" Orientation="Horizontal">
+            <!-- 用 WrapPanel 而不是 StackPanel：四个开关在窄窗口下会换行，
+                 挤在一行会把最后一个裁掉。「扩展词也写入短语」紧跟总开关，
+                 因为它是总开关的细分，放最后容易被当成无关选项。 -->
+            <WrapPanel Grid.Row="0" Orientation="Horizontal">
                 <fl:ToggleSwitch x:Name="AutoWriteToggle"
                                  Content="采纳后自动写入"
                                  Margin="0,0,24,0"
+                                 Checked="OnToggleChanged"
+                                 Unchecked="OnToggleChanged" />
+                <fl:ToggleSwitch x:Name="ExtendedWriteToggle"
+                                 Content="扩展词也写入短语"
+                                 Margin="0,0,24,0"
+                                 ToolTip="扩展云联想多是整句（例如「伊斯塔路是谁」）。关闭后采纳它们只上屏，不进自定义短语，也不记入用户词库；严格云联想不受影响。"
                                  Checked="OnToggleChanged"
                                  Unchecked="OnToggleChanged" />
                 <fl:ToggleSwitch x:Name="LocalFirstToggle"
@@ -65,7 +74,7 @@
                                  ToolTip="再写一条首字母记录，打 ystl 也能出「伊斯塔露」"
                                  Checked="OnToggleChanged"
                                  Unchecked="OnToggleChanged" />
-            </StackPanel>
+            </WrapPanel>
 
             <Grid Grid.Row="1" Margin="0,14,0,0" MaxWidth="1100" HorizontalAlignment="Stretch">
                 <Grid.ColumnDefinitions>

@@ -341,6 +341,18 @@ internal static class CoreTests
         Check.False(book.Learn("测试", "ceshi2", string.Empty, out _), "非法拼音应拒绝");
         Check.False(book.Learn("单", "dan", string.Empty, out _), "单字不记忆");
 
+        // 采纳后要不要记账：扩展词默认只上屏，避免整句挤进自定义短语
+        var policy = new AppSettings();
+        Check.False(policy.PhraseWriteExtended, "扩展词默认不写入自定义短语");
+        Check.True(WordbookCommitPolicy.ShouldRecord(isExtended: false, policy), "严格词默认记录");
+        Check.False(WordbookCommitPolicy.ShouldRecord(isExtended: true, policy), "扩展词默认不记录");
+
+        policy.PhraseWriteExtended = true;
+        Check.True(WordbookCommitPolicy.ShouldRecord(isExtended: true, policy), "打开开关后扩展词记录");
+
+        policy.WordbookLearnOnAccept = false;
+        Check.False(WordbookCommitPolicy.ShouldRecord(isExtended: false, policy), "关掉学习后严格词也不记");
+
         var directory = Path.Combine(Path.GetTempPath(), $"bp-words-{Guid.NewGuid():N}");
         var path = Path.Combine(directory, "words.json");
         try
@@ -1104,11 +1116,13 @@ internal static class CoreTests
             Check.Equal("Oem3", defaults.StrictAcceptKey, "默认采纳键应为 ·");
             Check.Equal(3, defaults.ExtendedMaxCount, "扩展默认 3 条");
             Check.True(!defaults.EnglishModeAssistEnabled, "英文模式默认关闭");
+            Check.True(!defaults.PhraseWriteExtended, "扩展词默认不写入自定义短语");
             Check.True(store.LastError is null, "文件不存在时不应报错");
 
             defaults.StrictAcceptKey = "Semicolon";
             defaults.ExtendedMaxCount = 2;
             defaults.OverlayPlacement = "Left";
+            defaults.PhraseWriteExtended = true;
             defaults.BlockedProcesses.Add("mstsc");
             Check.True(store.Save(defaults), "保存应成功");
 
@@ -1116,6 +1130,7 @@ internal static class CoreTests
             Check.Equal("Semicolon", reloaded.StrictAcceptKey, "采纳键应持久化");
             Check.Equal(2, reloaded.ExtendedMaxCount, "扩展条数应持久化");
             Check.Equal("Left", reloaded.OverlayPlacement, "浮窗位置应持久化");
+            Check.True(reloaded.PhraseWriteExtended, "扩展词写入开关应持久化");
             Check.Contains(reloaded.BlockedProcesses, "mstsc", "黑名单应持久化");
 
             File.WriteAllText(path, "{ 这不是合法 JSON");
