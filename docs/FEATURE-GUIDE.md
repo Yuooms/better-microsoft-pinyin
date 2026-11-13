@@ -34,6 +34,16 @@ internal sealed class WordCountFeature : IFeatureModule
         set => _settings.WordCountEnabled = value;
     }
 
+    // 注意：IsEnabled 只是配置代理。框架只在启动时按它决定要不要 StartAsync，
+    // 运行期改它不会重新走一遍生命周期。要让开关当场生效，自己加一个 SetEnabled：
+    //
+    // public void SetEnabled(bool enabled)
+    // {
+    //     if (enabled == _started) return;
+    //     if (enabled) _ = StartAsync(CancellationToken.None);
+    //     else _ = StopAsync();
+    // }
+
     public IReadOnlyList<ISettingsPage> SettingsPages { get; }
 
     public Task StartAsync(CancellationToken cancellationToken)
