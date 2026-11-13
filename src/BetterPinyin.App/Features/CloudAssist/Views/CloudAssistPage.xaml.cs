@@ -45,6 +45,9 @@ public partial class CloudAssistPage : Page
 {
     private const int MaxDiagnosticLines = 200;
 
+    /// <summary>禁用状态的透明度：灰得能看清内容，又能一眼看出点不动。</summary>
+    private const double DisabledOpacity = 0.4;
+
     private readonly CloudAssistFeature _feature;
     private readonly List<string> _diagnosticLines = new();
     private readonly ObservableCollection<ExtendedKeyItem> _extendedKeys = new();
@@ -180,8 +183,8 @@ public partial class CloudAssistPage : Page
             return;
         }
 
-        SaveStatusText.Text = Settings.ExtendedKeyMode == "Manual" && _extendedKeys.Count < Settings.ExtendedMaxCount
-            ? $"已保存；手动键位只有 {_extendedKeys.Count} 个，扩展最多显示 {_extendedKeys.Count} 条"
+        SaveStatusText.Text = Settings.ExtendedKeyMode == "Manual" && _extendedKeys.Count == 0
+            ? "已保存；手动模式还没有采纳键，扩展云联想不会显示"
             : "已保存并立即生效";
     }
 
@@ -231,31 +234,57 @@ public partial class CloudAssistPage : Page
 
     private void OnKeyModeChanged(object sender, SelectionChangedEventArgs e) => UpdateKeyModeState();
 
+    /// <summary>「键位分配」是否选了手动指定。</summary>
+    private bool IsManualKeyMode =>
+        string.Equals(TagOf(ExtendedKeyModeComboBox, "Auto"), "Manual", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// 按「键位分配」刷新下面几块的可编辑状态。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 自动模式的键位是「本地候选数 + 显示条数」算出来的，手动列表根本不参与。
+    /// 这时如果还能拖动、还能删，用户会以为改动生效了，实际下次查询仍按自动算——所以整块压暗并禁用。
+    /// </para>
+    /// <para>
+    /// 反过来，手动模式下有一个键就是一行，条数没有单独调节的余地：这一项锁掉并跟着列表走，
+    /// 增删键位后条数立刻同步，不用再手动对一遍。
+    /// </para>
+    /// </remarks>
     private void UpdateKeyModeState()
     {
-        if (AddExtendedKeyBox is null)
+        if (ExtendedKeysList is null || ExtendedCountComboBox is null)
         {
             return;
         }
 
-        // 列表始终可以编辑：键位分配选「自动」时用户也可能想先看看/改两个键，
-        // 真正改动时再由 EnsureManualMode 切到手动，避免出现一个看不见原因的禁用区。
-        AddExtendedKeyBox.IsEnabled = _extendedKeys.Count < KeyNames.MaxExtendedKeys;
-    }
+        var manual = IsManualKeyMode;
 
-    /// <summary>改动了扩展键就把「键位分配」切到手动，否则改动不会生效。</summary>
-    private void EnsureManualMode()
-    {
-        if (string.Equals(
-                TagOf(ExtendedKeyModeComboBox, "Auto"),
-                "Manual",
-                StringComparison.OrdinalIgnoreCase))
+        // 只设 IsEnabled 不改变外观，看着还是能点的样子，所以要连透明度一起调。
+        ExtendedKeysList.IsEnabled = manual;
+        ExtendedKeysList.Opacity = manual ? 1 : DisabledOpacity;
+        AddExtendedKeyBox.Opacity = manual ? 1 : DisabledOpacity;
+        ExtendedKeysLockedHint.Visibility = manual ? Visibility.Collapsed : Visibility.Visible;
+
+        AddExtendedKeyBox.IsEnabled = manual && _extendedKeys.Count < KeyNames.MaxExtendedKeys;
+
+        if (!manual && _dragItem is not null)
         {
-            return;
+            // 拖到一半切了模式：不放开鼠标捕获的话，指针会被列表一直吃住。
+            _dragItem = null;
+            _draggingKeys = false;
+            ExtendedKeysList.ReleaseMouseCapture();
         }
 
-        SelectByTag(ExtendedKeyModeComboBox, "Manual");
-        UpdateKeyModeState();
+        ExtendedCountComboBox.IsEnabled = !manual;
+        if (manual)
+        {
+            // 空列表也至少留 1 条：下拉框没有 0 这一项，扩展这时候本来就一条都不显示。
+            SelectByTag(
+                ExtendedCountComboBox,
+                Math.Clamp(_extendedKeys.Count, 1, KeyNames.MaxExtendedKeys)
+                    .ToString(CultureInfo.InvariantCulture));
+        }
     }
 
     private void LoadExtendedKeys()
@@ -285,9 +314,9 @@ public partial class CloudAssistPage : Page
             return;
         }
 
-        EnsureManualMode();
+        // 能走到这里说明当前就是手动模式：自动模式下添加框是禁用的。
         _extendedKeys.Add(new ExtendedKeyItem(e.KeyId, e.VirtualKey, KeyNames.Describe(e.VirtualKey)));
-        SaveStatusText.Text = "已添加，已切到手动指定；记得点「保存并应用」。";
+        SaveStatusText.Text = "已添加，记得点「保存并应用」。";
         UpdateKeyModeState();
     }
 
@@ -295,9 +324,8 @@ public partial class CloudAssistPage : Page
     {
         if ((sender as FrameworkElement)?.DataContext is ExtendedKeyItem item)
         {
-            EnsureManualMode();
             _extendedKeys.Remove(item);
-            SaveStatusText.Text = "已移除，已切到手动指定；记得点「保存并应用」。";
+            SaveStatusText.Text = "已移除，记得点「保存并应用」。";
             UpdateKeyModeState();
         }
 
@@ -308,6 +336,13 @@ public partial class CloudAssistPage : Page
     {
         _dragItem = null;
         _draggingKeys = false;
+
+        // 自动模式下整块是禁用的，这里再挡一道：禁用元素收不到正常鼠标事件，
+        // 但预览事件在命中测试的边界上不一定可靠，别让压暗的列表还能被拖动。
+        if (!IsManualKeyMode)
+        {
+            return;
+        }
 
         // 点在删除按钮上时不启动拖动，否则按钮永远点不中。
         if (FindAncestor<Button>(e.OriginalSource as DependencyObject) is not null)
@@ -358,9 +393,8 @@ public partial class CloudAssistPage : Page
             return;
         }
 
-        EnsureManualMode();
         _extendedKeys.Move(oldIndex, newIndex);
-        SaveStatusText.Text = "顺序已调整，已切到手动指定；记得点「保存并应用」。";
+        SaveStatusText.Text = "顺序已调整，记得点「保存并应用」。";
         e.Handled = true;
     }
 

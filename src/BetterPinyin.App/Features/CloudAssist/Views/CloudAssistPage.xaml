@@ -91,7 +91,8 @@
                         </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
-                                                Header="显示条数">
+                                                Header="显示条数"
+                                                ui:SettingRow.Description="手动指定时这一项跟着采纳键的个数走：有几个键就能显示几条。">
                             <ComboBox x:Name="ExtendedCountComboBox" Width="100">
                                 <ComboBoxItem Content="1 条" Tag="1" />
                                 <ComboBoxItem Content="2 条" Tag="2" />
@@ -112,9 +113,10 @@
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="采纳键"
-                                                ui:SettingRow.Description="点「添加按键」后直接按键；拖动左侧手柄调整顺序。第 1 个键对应浮窗第 1 行，最多 4 个；改动这里会自动切到手动指定。"
+                                                ui:SettingRow.Description="点「添加按键」后直接按键；拖动左侧手柄调整顺序。第 1 个键对应浮窗第 1 行，最多 4 个。只在「手动指定」下可以编辑。"
                                                 ui:SettingRow.ShowDivider="False">
                             <StackPanel Width="260">
+                                <!-- 自动模式下整块压暗并禁用（见 UpdateKeyModeState）：这时键位由本地候选数算出来，改这里不会有任何效果 -->
                                 <ListBox x:Name="ExtendedKeysList"
                                          Background="Transparent"
                                          BorderThickness="0"
@@ -190,6 +192,14 @@
                                                   ClearAfterCapture="True"
                                                   KeyCaptured="OnAddExtendedKeyCaptured"
                                                   Margin="0,2,0,0" />
+
+                                <fl:TextBlock x:Name="ExtendedKeysLockedHint"
+                                              Visibility="Collapsed"
+                                              FontTypography="Caption"
+                                              TextWrapping="Wrap"
+                                              Margin="0,6,0,0"
+                                              Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                              Text="自动模式由本地候选数决定采纳键，上面这些键不生效；想让它们生效，请把「键位分配」改成手动指定。" />
                             </StackPanel>
                         </HeaderedContentControl>
                     </StackPanel>
