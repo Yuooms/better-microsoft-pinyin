@@ -112,6 +112,7 @@ _registry.Register(new WordCountFeature(AppServices.Settings));
 - [ ] 设置项都有默认值，首次运行不写配置文件也能工作。
 - [ ] 涉及网络/跨进程的操作都带超时。
 - [ ] 面向用户的文案是中文，并且说明了该功能会做什么。
+- [ ] README 与相关 docs 同步更新（功能清单、排障、路线图），别让文档停在设计稿阶段。
 
 ## 反面例子
 

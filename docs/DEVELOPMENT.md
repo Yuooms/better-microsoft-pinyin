@@ -114,6 +114,24 @@ dotnet run --project tools/ImeProbe -- --activate-app --send-keys=09,09,09,09,73
 
 界面相关还有一个开发参数：`dotnet run --project src/BetterPinyin.App -- --page=外观` 可以直接打开指定的设置页（页名与左侧导航一致），省去手点。
 
+### 测试检查更新
+
+更新走的是「和 GitHub 上最新正式版比大小」，本机发布版通常就是最新版，所以默认看到的是「已是最新版本」。要验证「发现新版本」这条分支，临时把 `Directory.Build.props` 的 `<Version>` 调低（例如 `0.0.9`）再构建：
+
+```bash
+# 改成 0.0.9 后重新构建，此时 GitHub 上的 v0.1.0 就成了「新版本」
+dotnet build -c Debug
+dotnet run --project src/BetterPinyin.App -- --page=关于
+# 验完记得把版本号改回 Directory.Build.props 里 tag 对应的值
+```
+
+注意两点：
+
+1. `LastUpdateCheckUtc` 会把自动检查节流 24 小时；手动点「检查更新」不受影响，或者直接删掉 `settings.json` 里这个字段。
+2. `%TEMP%\BetterPinyin\update\<tag>\` 是下载与解压目录，`update.log` 里记着 robocopy 的退出码；测试残留可以直接删。
+
+替换脚本（`%TEMP%\BetterPinyin\apply-update.cmd`）是纯文本，可以直接用一个假目录跑一遍：参数依次是「解压目录、安装目录、主程序名、要等待的进程号、日志」，进程号随便填一个已经退出的即可——它会立刻跳过等待，做复制、重启、自删。
+
 ### 在 Windows 11 上测试
 
 Windows 11 改了记事本（UWP 应用），也更容易出现「同时装了多个中文输入法」的情况，

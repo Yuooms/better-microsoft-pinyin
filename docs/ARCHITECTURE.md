@@ -9,15 +9,18 @@
 ```
 ┌──────────────────────────────────────────────────────────┐
 │ BetterPinyin.App (WPF)                                    │
-│  托盘 / 设置窗口（导航自动生成） / 云候选浮窗 / 统计页      │
+│  托盘 / 设置窗口（导航自动生成） / 云候选浮窗               │
+│  词库页 / 统计页 / 关于页（含更新）                         │
 ├──────────────────────────────────────────────────────────┤
 │ Features/CloudAssist  ← 一个 IFeatureModule 实现           │
 │  CloudAssistController：按键→查询→排序→展示→上屏          │
+│ Features/Statistics   ← 另一个 IFeatureModule              │
 ├─────────────────────────────┬────────────────────────────┤
 │ BetterPinyin.Core           │ BetterPinyin.Interop        │
 │  Bing 客户端 / 响应解析      │  KeyboardHub（钩子 + 组字状态机）│
 │  候选清洗 / 读音校验 / 排序   │  SendInput / 光标定位         │
 │  端点体检 / 设置 / 模块框架   │  UIA 候选窗读取（STA 线程）   │
+│  统计聚合 / 词库 / 版本解析   │  IME 词库文件读写             │
 └─────────────────────────────┴────────────────────────────┘
             ↑ 双方都只依赖 ↓
 ┌──────────────────────────────────────────────────────────┐
@@ -101,6 +104,26 @@
 
 `IInputIntegration` 已经抽象出能力模型。当前只实现了外挂浮窗路线（`CanInjectNativeCandidate = false`）。未来若要支持"把云词写进输入法自己的候选槽位"，新增一个实现即可，`CloudAssistController` 与 `Core` 无需改动。技术前置见 [ROADMAP.md](ROADMAP.md)。
 
+## 自更新
+
+更新不属于 `IFeatureModule`：它没有常驻功能，也不需要自己的导航页，只挂在「关于」页与启动流程上。
+
+```
+关于页 [检查更新] ──┐
+启动时（每天≤1 次）─┴→ UpdateService.CheckAsync → GitHub releases/latest
+                                                 │
+                          有正式版更新 → 显示 [下载并安装] / 托盘气泡
+                                                 │
+                     DownloadAsync：%TEMP%\BetterPinyin\update\<tag> 下载 + 解压
+                                                 │
+                     TryApplyAndRestart：写 apply-update.cmd，起 cmd.exe，然后退出
+                                                 │
+                     cmd 等本进程退出 → robocopy 覆盖安装目录 → 重启 → 自删
+```
+
+版本解析与替换脚本的文本放在 `Core/Updates`（可单测），网络、文件与进程操作放在 `App/Updates`。为什么绕一个批处理、为什么脚本正文必须纯 ASCII，见
+[TECH-NOTES 第二十一节](TECH-NOTES.md)。
+
 ## 线程模型
 
 | 组件 | 线程 | 约束 |
@@ -111,6 +134,8 @@
 | 采纳上屏 | 线程池（`Task.Run`） | 里面有同步 UIA 读取；留在钩子线程会把整机键盘堵住约 1 秒。提交窗口内吞掉非修饰键 |
 | UIA 读取 | 专用 STA 线程（`UiaWorker`） | 串行执行 + 带超时；超时后放弃结果，不阻塞调用方 |
 | 浮窗 | UI 线程 | 事件从后台线程回投时经 `Dispatcher` 切回 |
+| 更新检查 | 线程池，结果回投 UI 线程 | 启动时后台跑，不能挡住第一帧；写 `LastUpdateCheckUtc` 与弹气泡都在 UI 线程 |
+| 更新替换 | 独立的 `cmd.exe` | 不再依附本进程，等本进程退出后才能覆盖 exe |
 
 ## 外观与主题
 
@@ -145,6 +170,9 @@ src/BetterPinyin.App/Shell/
 | 内容 | 位置 |
 |---|---|
 | 设置 | `%APPDATA%\BetterPinyin\settings.json` |
+| 用户词库 | `%APPDATA%\BetterPinyin\words.json`（采纳过哪些云词，用于浮窗排序与回写短语） |
+| 输入统计 | `%APPDATA%\BetterPinyin\statistics.json`（默认关闭） |
 | 日志 | `%LOCALAPPDATA%\BetterPinyin\logs\app.log`（超过 1MB 滚动） |
+| 更新临时目录 | `%TEMP%\BetterPinyin\update\<tag>\`（下载包、解压结果与 `update.log`，安装完由脚本删除） |
 
 设置写入采用「临时文件 + 替换」，避免断电留下半个文件；读取失败退回默认值并在诊断页显示原因。

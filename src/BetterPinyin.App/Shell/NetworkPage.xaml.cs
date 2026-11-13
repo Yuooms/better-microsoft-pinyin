@@ -58,7 +58,9 @@ public partial class NetworkPage : Page
         AddInfoText($"端点策略：{AppServices.Settings.EndpointMode}（自动模式下按体检结果依次尝试）");
         AddInfoText($"代理：{AppServices.Settings.ProxyMode}");
         AddInfoText($"请求超时：{AppServices.Settings.RequestTimeoutMs} 毫秒");
-        AddInfoText($"缓存时长：{AppServices.Settings.CacheMinutes} 分钟");
+
+        // 缓存还没接进查询链路（见 ROADMAP 的技术债），这里如实标注，别让用户以为它在生效。
+        AddInfoText($"缓存：未启用（预留 CacheMinutes = {AppServices.Settings.CacheMinutes}）");
         AddInfoText($"配置文件：{AppServices.Store.FilePath}");
     }
 
