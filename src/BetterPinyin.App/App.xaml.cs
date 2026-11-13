@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Threading;
 using System.Windows;
@@ -6,6 +7,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using BetterPinyin.App.Updates;
 using BetterPinyin.Interop.Input;
 using BetterPinyin.Interop.Windowing;
 using BetterPinyin.App.Features.CloudAssist;
@@ -108,6 +110,9 @@ public partial class App : Application
             // 模块启动不能阻塞 UI 线程，否则第一帧会卡在钩子安装上。
             _ = StartFeaturesAsync();
 
+            // 更新检查同样放到后台：网络慢的时候不能挡住设置窗口出现。
+            ScheduleUpdateCheck();
+
             // 首次运行（还没有配置文件）直接把设置打开，避免用户以为程序没启动。
             // --settings 便于开发时直接进设置页核对界面；--page=外观 可直达某一页。
             _startupPage = e.Args
@@ -182,6 +187,67 @@ public partial class App : Application
 
     private static void OnThemeChanged(object? sender, EventArgs e) =>
         FluentThemeBridge.ApplyRuntime(ThemeManager.IsDark);
+
+    /// <summary>两次自动检查之间的最小间隔。</summary>
+    private static readonly TimeSpan UpdateCheckInterval = TimeSpan.FromHours(24);
+
+    /// <summary>
+    /// 按设置与节流间隔决定要不要在后台查一次新版本。
+    /// </summary>
+    /// <remarks>
+    /// GitHub 的未认证接口有速率限制，程序也没必要反复问，所以每天最多一次。
+    /// 失败只写日志不打扰用户——离线、代理阻断、被墙都是常态。
+    /// </remarks>
+    private void ScheduleUpdateCheck()
+    {
+        if (!AppServices.Settings.UpdateCheckEnabled)
+        {
+            return;
+        }
+
+        if (DateTimeOffset.TryParse(
+                AppServices.Settings.LastUpdateCheckUtc,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind,
+                out var last) &&
+            DateTimeOffset.UtcNow - last < UpdateCheckInterval)
+        {
+            return;
+        }
+
+        _ = CheckUpdatesInBackgroundAsync();
+    }
+
+    private async Task CheckUpdatesInBackgroundAsync()
+    {
+        var outcome = await AppServices.Updates.CheckAsync(CancellationToken.None).ConfigureAwait(true);
+
+        if (!outcome.Succeeded)
+        {
+            Log.Write($"检查更新失败：{outcome.Message}");
+            return;
+        }
+
+        AppServices.Settings.LastUpdateCheckUtc =
+            DateTimeOffset.UtcNow.ToString("O", CultureInfo.InvariantCulture);
+        AppServices.SaveSettings();
+
+        Log.Write($"更新检查：{outcome.Message}");
+        if (!outcome.HasUpdate)
+        {
+            return;
+        }
+
+        // 设置窗口开着的时候用户自己能看见，不用再弹气泡。
+        if (_settingsWindow is { IsVisible: true })
+        {
+            return;
+        }
+
+        _trayIcon?.ShowBalloon(
+            $"发现新版本 {outcome.Latest?.Tag}",
+            "打开设置 → 关于，可以下载并安装");
+    }
 
     /// <summary>
     /// 把设置窗口按当前布局渲染成 PNG，然后退出。

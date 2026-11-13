@@ -1,6 +1,7 @@
 using System.IO;
 using System.Reflection;
 using BetterPinyin.App.Features.CloudAssist;
+using BetterPinyin.App.Updates;
 using BetterPinyin.Core.Lexicon;
 using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Settings;
@@ -60,6 +61,9 @@ internal static class AppServices
 
     /// <summary>当前用户的开机启动登记。</summary>
     public static StartupRegistration Startup { get; } = CreateStartupRegistration();
+
+    /// <summary>版本检查与自更新（「关于」页与启动时的后台检查共用）。</summary>
+    public static UpdateService Updates { get; } = new(Http.Client);
 
     /// <summary>串行化短语文件的写入，避免多次采纳并发改同一个文件。</summary>
     private static readonly object PhraseGate = new();

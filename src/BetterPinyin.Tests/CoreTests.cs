@@ -6,6 +6,7 @@ using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Ranking;
 using BetterPinyin.Core.Settings;
 using BetterPinyin.Core.Statistics;
+using BetterPinyin.Core.Updates;
 using BetterPinyin.Core.Wordbook;
 using BetterPinyin.Interop.Input;
 using BetterPinyin.Interop.Startup;
@@ -80,20 +81,21 @@ internal static class CoreTests
 {
     public static void RunAll()
     {
-        Run("[1/14] Bing 响应解析", Parser);
-        Run("[2/14] 候选清洗", Sanitizer);
-        Run("[3/14] 拼音匹配", Matcher);
-        Run("[4/14] 严格 / 扩展分区", Selector);
-        Run("[5/14] 排序合并（旧链路）", Ranker);
-        Run("[6/14] 设置持久化", Settings);
-        Run("[7/14] 词库词表", Catalog);
-        Run("[8/14] 用户词库", Wordbook);
-        Run("[9/14] 自学习词库", Learning);
-        Run("[10/14] 自学习词库删除", LearningDelete);
-        Run("[11/14] 自学习词库备份", LearningBackup);
-        Run("[12/14] 开机启动登记", StartupRegistrationTest);
-        Run("[13/14] 输入统计", Statistics);
-        Run("[14/14] 组字状态机", CompositionTrackerStates);
+        Run("[1/15] Bing 响应解析", Parser);
+        Run("[2/15] 候选清洗", Sanitizer);
+        Run("[3/15] 拼音匹配", Matcher);
+        Run("[4/15] 严格 / 扩展分区", Selector);
+        Run("[5/15] 排序合并（旧链路）", Ranker);
+        Run("[6/15] 设置持久化", Settings);
+        Run("[7/15] 词库词表", Catalog);
+        Run("[8/15] 用户词库", Wordbook);
+        Run("[9/15] 自学习词库", Learning);
+        Run("[10/15] 自学习词库删除", LearningDelete);
+        Run("[11/15] 自学习词库备份", LearningBackup);
+        Run("[12/15] 开机启动登记", StartupRegistrationTest);
+        Run("[13/15] 输入统计", Statistics);
+        Run("[14/15] 组字状态机", CompositionTrackerStates);
+        Run("[15/15] 版本检查与更新脚本", Updates);
     }
 
     /// <summary>逐组执行，一组崩掉不影响其它组出结论。</summary>
@@ -290,6 +292,66 @@ internal static class CoreTests
         Check.Equal(2, ended.Count, "Reset 不触发结束事件");
         Check.True(tracker.Version > versionBefore, "Reset 递增代次");
         Check.Equal(string.Empty, tracker.RawInput, "Reset 清空缓冲");
+    }
+
+    /// <summary>版本检查：Release 解析、版本比较与替换脚本。</summary>
+    private static void Updates()
+    {
+        // 只扔一份接近真实的 releases/latest 响应进去，验证我们关心的字段。
+        const string json = """
+        {
+          "tag_name": "v0.2.0",
+          "name": "v0.2.0",
+          "html_url": "https://github.com/Yuooms/better-microsoft-pinyin/releases/tag/v0.2.0",
+          "body": "修复若干问题",
+          "published_at": "2026-11-20T08:00:00Z",
+          "prerelease": false,
+          "assets": [
+            { "name": "source.zip", "browser_download_url": "https://example.com/source.zip", "size": 12 },
+            { "name": "BetterMicrosoftPinyin-v0.2.0-win-x64.zip", "browser_download_url": "https://example.com/win.zip", "size": 75932534 }
+          ]
+        }
+        """;
+
+        var release = ReleaseParser.Parse(json);
+        Check.True(release is not null, "合法 Release 应能解析");
+        Check.Equal("v0.2.0", release!.Tag, "tag 原样保留");
+        Check.Equal("0.2.0", release.Version.ToString(3), "版本号应从 tag 解析");
+        Check.Equal(2, release.Assets.Count, "附件数量应被完整读出");
+        Check.Equal("https://example.com/win.zip", release.FindWindowsPackage()?.DownloadUrl, "应挑出 Windows 包");
+        Check.Equal(75932534L, release.FindWindowsPackage()?.Size, "附件大小应读出");
+        Check.True(release.IsNewerThan(new Version(0, 1, 0)), "0.2.0 应比 0.1.0 新");
+        Check.False(release.IsNewerThan(new Version(0, 2, 0)), "同版本不算更新");
+        Check.False(release.IsNewerThan(new Version(0, 3, 0)), "旧版本不算更新");
+        Check.True(release.PublishedAt is not null, "发布时间应能解析");
+
+        // 预发布不该催用户升级。
+        var beta = ReleaseParser.Parse("""{ "tag_name": "v0.3.0-beta.1", "prerelease": true }""");
+        Check.True(beta is not null, "预发布也应能解析");
+        Check.True(beta!.IsPrerelease, "带 -beta 的应标为预发布");
+        Check.False(beta.IsNewerThan(new Version(0, 1, 0)), "预发布不应提示更新");
+
+        // prerelase 字段漏写时，靠 tag 里的 - 也能判断出来。
+        var rc = ReleaseParser.Parse("""{ "tag_name": "v0.3.0-rc1" }""");
+        Check.True(rc is { IsPrerelease: true }, "tag 里带 - 即视为预发布");
+
+        Check.True(ReleaseParser.Parse("这不是 JSON") is null, "坏 JSON 应返回 null");
+        Check.True(ReleaseParser.Parse(string.Empty) is null, "空响应应返回 null");
+        Check.True(ReleaseParser.Parse("""{ "name": "没有 tag" }""") is null, "缺 tag 应返回 null");
+
+        // tag 解析：允许 v 前缀、允许两位版本，预发布只取数字部分。
+        Check.Equal("1.2.3", ReleaseParser.ParseTag("v1.2.3")?.ToString(3), "应去掉 v 前缀");
+        Check.Equal("1.2.0", ReleaseParser.ParseTag("1.2")?.ToString(3), "两位版本补成三段");
+        Check.Equal("0.2.0", ReleaseParser.ParseTag("v0.2.0-rc1")?.ToString(3), "预发布只取数字部分");
+        Check.True(ReleaseParser.ParseTag("nightly") is null, "认不出的 tag 返回 null");
+
+        // 替换脚本：参数化路径 + 纯 ASCII + CRLF，三条都是踩过的坑。
+        var script = UpdateScript.Build();
+        Check.True(script.Contains("robocopy", StringComparison.Ordinal), "脚本应调用 robocopy");
+        Check.True(script.Contains("%WAITPID%", StringComparison.Ordinal), "脚本应等待旧进程退出");
+        Check.True(script.Contains("start \"\" \"%DST%\\%EXE%\"", StringComparison.Ordinal), "脚本应重启程序");
+        Check.True(script.Contains("\r\n", StringComparison.Ordinal), "脚本行尾必须是 CRLF");
+        Check.True(script.All(character => character < 128), "脚本必须是纯 ASCII，否则中文路径会乱码");
     }
 
     private static void Run(string name, Action action)
@@ -1100,10 +1162,12 @@ internal static class CoreTests
             var defaults = store.Load();
             Check.True(defaults.CloudAssistEnabled, "默认应启用云联想");
             Check.True(defaults.StrictEnabled, "默认应启用云联想（严格）");
-            Check.True(defaults.ExtendedEnabled, "默认应启用扩展云联想");
+            Check.True(!defaults.ExtendedEnabled, "扩展云联想默认关闭，需要的人自己打开");
             Check.Equal("Oem3", defaults.StrictAcceptKey, "默认采纳键应为 ·");
             Check.Equal(3, defaults.ExtendedMaxCount, "扩展默认 3 条");
             Check.True(!defaults.EnglishModeAssistEnabled, "英文模式默认关闭");
+            Check.True(defaults.UpdateCheckEnabled, "默认开启启动时检查更新");
+            Check.True(defaults.LastUpdateCheckUtc is null, "默认没有检查记录");
             Check.True(store.LastError is null, "文件不存在时不应报错");
 
             defaults.StrictAcceptKey = "Semicolon";

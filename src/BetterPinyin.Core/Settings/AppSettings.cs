@@ -39,8 +39,14 @@ public sealed class AppSettings
     /// <summary>云联想命中本地已有候选时是否隐藏。</summary>
     public bool StrictDedupeLocal { get; set; } = true;
 
-    /// <summary>是否启用「扩展云联想」（输入是前缀的更长词）。</summary>
-    public bool ExtendedEnabled { get; set; } = true;
+    /// <summary>
+    /// 是否启用「扩展云联想」（输入是前缀的更长词）。
+    /// </summary>
+    /// <remarks>
+    /// 默认关闭：扩展词更像「猜你想搜」，命中率比整词低，首次上手先只给云联想更干净。
+    /// 需要的人可以在云联想页自己打开，键位与条数都有默认值。
+    /// </remarks>
+    public bool ExtendedEnabled { get; set; }
 
     /// <summary>扩展云联想最多显示几条（1~4）。</summary>
     public int ExtendedMaxCount { get; set; } = 3;
@@ -156,6 +162,18 @@ public sealed class AppSettings
 
     /// <summary>是否随系统启动。</summary>
     public bool StartWithWindows { get; set; }
+
+    /// <summary>
+    /// 是否在启动时检查更新。
+    /// </summary>
+    /// <remarks>
+    /// 默认开启：只读 GitHub 的公开发布信息，每天最多一次，失败静默。
+    /// 这也是唯一会主动访问第三方接口的非功能请求，所以留了开关，关掉后完全不出网。
+    /// </remarks>
+    public bool UpdateCheckEnabled { get; set; } = true;
+
+    /// <summary>上次成功检查更新的时间（ISO 8601，UTC）；为空表示还没查过。</summary>
+    public string? LastUpdateCheckUtc { get; set; }
 
     /// <summary>不启用云联想的进程名（不含 .exe，忽略大小写）。</summary>
     public List<string> BlockedProcesses { get; set; } = new();
