@@ -24,6 +24,19 @@ internal sealed class CloudSuggestionsShownEventArgs : EventArgs
     public bool EnglishMode { get; init; }
 }
 
+/// <summary>云候选真的上屏之后的事件参数。</summary>
+internal sealed class CloudSuggestionAcceptedEventArgs : EventArgs
+{
+    /// <summary>上屏的文本。</summary>
+    public required string Text { get; init; }
+
+    /// <summary>本次实际请求的拼音串（简拼已展开）；缺失时等于原始输入。</summary>
+    public required string Reading { get; init; }
+
+    /// <summary>用户原始输入串。</summary>
+    public required string Query { get; init; }
+}
+
 /// <summary>
 /// 云联想主控。
 /// </summary>
@@ -51,8 +64,8 @@ internal sealed class CloudAssistController : IDisposable
 
     private readonly AppSettings _settings;
     private readonly BingSuggestionClient _client;
-    private readonly LowLevelKeyboardHook _hook = new();
-    private readonly CompositionTracker _tracker = new();
+    private readonly KeyboardHub _hub;
+    private readonly CompositionTracker _tracker;
 
     /// <summary>本次按键序列里已被吞掉的键，抬起时也要吞掉，避免目标窗口收到孤立 keyup。</summary>
     private readonly HashSet<int> _swallowUntilKeyUp = new();
@@ -74,9 +87,12 @@ internal sealed class CloudAssistController : IDisposable
 
     /// <summary>创建控制器。</summary>
     /// <param name="settings">设置。</param>
-    public CloudAssistController(AppSettings settings)
+    /// <param name="hub">键盘中枢：钩子与组字状态机由它持有，本类只是订阅者。</param>
+    public CloudAssistController(AppSettings settings, KeyboardHub hub)
     {
         _settings = settings;
+        _hub = hub;
+        _tracker = hub.Tracker;
         _client = new BingSuggestionClient(
             Http.Client,
             settings.Market,
@@ -93,6 +109,15 @@ internal sealed class CloudAssistController : IDisposable
     /// <summary>诊断信息。</summary>
     public event EventHandler<string>? Diagnostics;
 
+    /// <summary>
+    /// 云候选已经真的上屏。
+    /// </summary>
+    /// <remarks>
+    /// 与「记入词库」分开：词库可以关，统计需要的是「这个词确实进了正文」这个事实。
+    /// 因此本事件由 <see cref="CommitSucceeded"/> 的调用方触发，不受词库开关影响。
+    /// </remarks>
+    public event EventHandler<CloudSuggestionAcceptedEventArgs>? SuggestionAccepted;
+
     /// <summary>钩子是否已安装。</summary>
     public bool IsRunning { get; private set; }
 
@@ -102,7 +127,7 @@ internal sealed class CloudAssistController : IDisposable
     /// <summary>最近一次输入串，供诊断展示。</summary>
     public string LastQuery { get; private set; } = string.Empty;
 
-    /// <summary>启动：装钩子、订阅状态机。</summary>
+    /// <summary>启动：申请钩子、订阅状态机。</summary>
     public void Start()
     {
         if (IsRunning)
@@ -112,30 +137,28 @@ internal sealed class CloudAssistController : IDisposable
 
         _tracker.CompositionChanged += OnCompositionChanged;
         _tracker.CompositionEnded += OnCompositionEnded;
-        _hook.KeyEvent += OnKeyEvent;
+        _hub.Filter += OnKeyEvent;
 
-        try
+        if (!_hub.Acquire("cloud-assist", out var error))
         {
-            _hook.Start();
-            IsRunning = true;
-            Report("已启动，等待输入");
-        }
-        catch (Exception ex)
-        {
-            _hook.KeyEvent -= OnKeyEvent;
+            _hub.Filter -= OnKeyEvent;
             _tracker.CompositionChanged -= OnCompositionChanged;
             _tracker.CompositionEnded -= OnCompositionEnded;
-            Report($"键盘钩子安装失败：{ex.Message}");
+            Report($"键盘钩子安装失败：{error}");
+            return;
         }
+
+        IsRunning = true;
+        Report("已启动，等待输入");
     }
 
     /// <summary>停止。</summary>
     public void Stop()
     {
-        _hook.Dispose();
-        _hook.KeyEvent -= OnKeyEvent;
+        _hub.Filter -= OnKeyEvent;
         _tracker.CompositionChanged -= OnCompositionChanged;
         _tracker.CompositionEnded -= OnCompositionEnded;
+        _hub.Release("cloud-assist");
 
         CancelPendingQuery();
         Clear();
@@ -182,7 +205,7 @@ internal sealed class CloudAssistController : IDisposable
     {
         if (s_traceKeys && e.IsKeyDown)
         {
-            Report($"trace 键 vk=0x{e.VirtualKey:X2} own={e.IsOwnInjection} mod={ReadModifiers()} " +
+            Report($"trace 键 vk=0x{e.VirtualKey:X2} own={e.IsOwnInjection} mod={e.Modifiers} " +
                    $"fg=0x{NativeMethods.GetForegroundWindow().ToInt64():X} name={WindowProcess.GetProcessName(NativeMethods.GetForegroundWindow())}");
         }
 
@@ -224,7 +247,7 @@ internal sealed class CloudAssistController : IDisposable
             return;
         }
 
-        var modifiers = ReadModifiers();
+        var modifiers = e.Modifiers;
         var map = Volatile.Read(ref _map);
 
         if (modifiers == ModifierKeys.None && map.Count > 0 && map.TryGet(e.VirtualKey, out var target))
@@ -285,7 +308,8 @@ internal sealed class CloudAssistController : IDisposable
             return;
         }
 
-        _tracker.Feed(e.VirtualKey, e.IsKeyDown, modifiers, e.IsOwnInjection);
+        // 组字状态机由 KeyboardHub 统一喂：它在本方法返回、且 Handled 仍为 false 时才喂。
+        // 这里再喂一次会让同一个字母被追加两遍。
     }
 
     /// <summary>修饰键本身不参与「提交窗口内吞键」，否则 Shift/Ctrl 状态会错乱。</summary>
@@ -637,6 +661,27 @@ internal sealed class CloudAssistController : IDisposable
     /// 不要放进 <c>finally</c>——那里同时覆盖数字键回放、代次变化、候选窗未消失等失败分支，
     /// 会把没上屏的词也记进去。
     /// </remarks>
+    /// <summary>通知订阅方「这条云候选真的上屏了」。</summary>
+    /// <param name="target">采纳目标。</param>
+    /// <param name="query">用户原始输入串。</param>
+    private void ReportAccepted(in ActivationTarget target, string query)
+    {
+        var reading = target.Suggestion.Reading;
+        if (string.IsNullOrEmpty(reading))
+        {
+            reading = query;
+        }
+
+        SuggestionAccepted?.Invoke(
+            this,
+            new CloudSuggestionAcceptedEventArgs
+            {
+                Text = target.Suggestion.Text,
+                Reading = reading,
+                Query = query,
+            });
+    }
+
     private void CommitSucceeded(in ActivationTarget target, string query)
     {
         if (!_settings.WordbookLearnOnAccept)
@@ -723,6 +768,7 @@ internal sealed class CloudAssistController : IDisposable
             {
                 Report($"已上屏：{target.Suggestion.Text}");
                 CommitSucceeded(target, query);
+                ReportAccepted(target, query);
             }
             else
             {
@@ -801,6 +847,7 @@ internal sealed class CloudAssistController : IDisposable
             {
                 Report($"已替换上屏：{target.Suggestion.Text}");
                 CommitSucceeded(target, query);
+                ReportAccepted(target, query);
             }
             else
             {
@@ -846,32 +893,6 @@ internal sealed class CloudAssistController : IDisposable
         }
 
         return false;
-    }
-
-    private static ModifierKeys ReadModifiers()
-    {
-        var modifiers = ModifierKeys.None;
-        if ((NativeMethods.GetAsyncKeyState(0x10) & 0x8000) != 0)
-        {
-            modifiers |= ModifierKeys.Shift;
-        }
-
-        if (NativeMethods.IsCtrlDown)
-        {
-            modifiers |= ModifierKeys.Control;
-        }
-
-        if (NativeMethods.IsAltDown)
-        {
-            modifiers |= ModifierKeys.Alt;
-        }
-
-        if (NativeMethods.IsWinDown)
-        {
-            modifiers |= ModifierKeys.Windows;
-        }
-
-        return modifiers;
     }
 
     private static bool IsOwnProcessForeground()

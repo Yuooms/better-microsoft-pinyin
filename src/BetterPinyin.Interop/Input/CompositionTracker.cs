@@ -253,10 +253,15 @@ public sealed class CompositionTracker
 
     private void End(CompositionEndReason reason)
     {
+        // 先快照再清零：事件订阅方（统计、诊断）需要知道这一次输入到底打了多长，
+        // 清零之后再读 RawInput 只会拿到空串。
+        var rawInput = Snapshot();
+        var length = _length;
+
         _length = 0;
         _composing = false;
         _version++;
-        CompositionEnded?.Invoke(this, new CompositionEndedEventArgs(_version, reason));
+        CompositionEnded?.Invoke(this, new CompositionEndedEventArgs(_version, reason, rawInput, length));
     }
 
     /// <summary>在已持锁的前提下取当前串，避免事件参数里再次加锁。</summary>

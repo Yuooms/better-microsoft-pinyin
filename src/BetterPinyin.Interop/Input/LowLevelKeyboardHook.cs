@@ -25,6 +25,16 @@ public sealed class KeyboardHookEventArgs : EventArgs
     public required bool IsOwnInjection { get; init; }
 
     /// <summary>
+    /// 这一击发生时按下的修饰键。
+    /// </summary>
+    /// <remarks>
+    /// 在钩子回调里算一次，而不是让每个订阅方各查一遍。
+    /// 理由是 <c>GetAsyncKeyState</c> 反映的是「此刻」的键盘状态：
+    /// 订阅方如果晚几十毫秒再查（例如把事件投递到线程池），Shift 可能已经松开了。
+    /// </remarks>
+    public ModifierKeys Modifiers { get; init; }
+
+    /// <summary>
     /// 设为 true 表示吞掉这次按键，不再传给目标窗口。
     /// 只在云候选浮窗可见且按下的正是采纳键时使用。
     /// </summary>
@@ -123,6 +133,7 @@ public sealed class LowLevelKeyboardHook : IDisposable
             IsKeyDown = isDown,
             IsInjected = (info.Flags & NativeMethods.LLKHF_INJECTED) != 0,
             IsOwnInjection = info.ExtraInfo == NativeMethods.InjectionMarker,
+            Modifiers = ReadModifiers(),
         };
 
         try
@@ -137,5 +148,33 @@ public sealed class LowLevelKeyboardHook : IDisposable
         return args.Handled
             ? 1
             : NativeMethods.CallNextHookEx(_hookHandle, nCode, wParam, lParam);
+    }
+
+    /// <summary>读一次当前的修饰键状态。</summary>
+    /// <returns>按下的修饰键。</returns>
+    private static ModifierKeys ReadModifiers()
+    {
+        var modifiers = ModifierKeys.None;
+        if ((NativeMethods.GetAsyncKeyState(0x10) & 0x8000) != 0)
+        {
+            modifiers |= ModifierKeys.Shift;
+        }
+
+        if (NativeMethods.IsCtrlDown)
+        {
+            modifiers |= ModifierKeys.Control;
+        }
+
+        if (NativeMethods.IsAltDown)
+        {
+            modifiers |= ModifierKeys.Alt;
+        }
+
+        if (NativeMethods.IsWinDown)
+        {
+            modifiers |= ModifierKeys.Windows;
+        }
+
+        return modifiers;
     }
 }

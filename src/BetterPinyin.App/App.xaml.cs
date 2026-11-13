@@ -6,6 +6,7 @@ using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
+using BetterPinyin.Interop.Input;
 using BetterPinyin.Interop.Windowing;
 using BetterPinyin.App.Features.CloudAssist;
 using BetterPinyin.App.Shell;
@@ -27,6 +28,7 @@ public partial class App : Application
     private Mutex? _singleInstanceMutex;
     private TrayIcon? _trayIcon;
     private CloudAssistFeature? _cloudAssist;
+    private KeyboardHub? _keyboardHub;
     private FeatureRegistry? _registry;
     private SettingsWindow? _settingsWindow;
     private string? _startupPage;
@@ -82,7 +84,11 @@ public partial class App : Application
             SystemTheme.Start();
 
             _registry = new FeatureRegistry();
-            _cloudAssist = new CloudAssistFeature(AppServices.Settings);
+
+            // 键盘钩子是进程级独占资源，必须只有一个持有者：
+            // 云联想和统计都订阅它，谁先需要谁触发安装，最后一个走了才卸载。
+            _keyboardHub = new KeyboardHub();
+            _cloudAssist = new CloudAssistFeature(AppServices.Settings, _keyboardHub);
             _registry.Register(_cloudAssist);
 
             _trayIcon = new TrayIcon(
@@ -142,6 +148,7 @@ public partial class App : Application
         {
             _registry?.StopAllAsync().GetAwaiter().GetResult();
             _cloudAssist?.Dispose();
+            _keyboardHub?.Dispose();
             _trayIcon?.Dispose();
             AppServices.SaveSettings();
             AppServices.Shutdown();
@@ -298,7 +305,7 @@ public partial class App : Application
         if (_cloudAssist is not null)
         {
             _cloudAssist.IsEnabled = enabled;
-            _cloudAssist.ApplySettings();
+            _cloudAssist.SetEnabled(enabled);
         }
 
         _trayIcon?.SetEnabledState(enabled);

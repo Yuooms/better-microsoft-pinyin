@@ -61,10 +61,16 @@ public sealed class CompositionChangedEventArgs : EventArgs
 public sealed class CompositionEndedEventArgs : EventArgs
 {
     /// <summary>创建事件参数。</summary>
-    public CompositionEndedEventArgs(long version, CompositionEndReason reason)
+    public CompositionEndedEventArgs(
+        long version,
+        CompositionEndReason reason,
+        string rawInput = "",
+        int length = 0)
     {
         Version = version;
         Reason = reason;
+        RawInput = rawInput;
+        Length = length;
     }
 
     /// <summary>代次号。</summary>
@@ -72,6 +78,19 @@ public sealed class CompositionEndedEventArgs : EventArgs
 
     /// <summary>结束原因。</summary>
     public CompositionEndReason Reason { get; }
+
+    /// <summary>
+    /// 结束前那一瞬间的拼音串。
+    /// </summary>
+    /// <remarks>
+    /// 状态机会在抛事件之前清零缓冲，所以这个值只能在 <c>End()</c> 里快照，
+    /// 事后读 <c>CompositionTracker.RawInput</c> 永远是空串。
+    /// 退格退空时这里也是空串——那一次输入确实什么都没留下。
+    /// </remarks>
+    public string RawInput { get; }
+
+    /// <summary>结束前那一瞬间的拼音串长度。</summary>
+    public int Length { get; }
 }
 
 /// <summary>组字结束原因。</summary>
