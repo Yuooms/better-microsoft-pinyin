@@ -76,6 +76,22 @@ dotnet run --project tools/ImeProbe -- --nudge-mouse
 注意 `--move-mouse` 走的是 `SetCursorPos`：它能触发 WPF 的 `MouseEnter`（可以验证 hover 动画），
 但不算"用户输入"，驱动不了 ToolTip 的悬停计时，所以提示框的**延迟**只能靠真人验证。
 
+需要真实点击或拖动时：
+
+```bash
+# 坐标是屏幕坐标；--focus 会先把目标窗口切到前台再动手
+dotnet run --project tools/ImeProbe -- --focus=BetterMicrosoftPinyin --click=900,322
+dotnet run --project tools/ImeProbe -- --focus=BetterMicrosoftPinyin --drag=940,626,940,698
+```
+
+坐标会受缩放与窗口位置影响。更可靠的做法是先用 UIA 拿控件的物理坐标：
+
+```bash
+dotnet run --project tools/ImeProbe -- --ui-elements=BetterMicrosoftPinyin
+```
+
+输出里带每个元素的左上角与尺寸，直接取中心点即可。
+
 新增的几件工具：
 
 ```bash

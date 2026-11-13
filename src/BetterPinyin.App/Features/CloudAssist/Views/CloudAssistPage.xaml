@@ -18,6 +18,11 @@
                            Appearance="Primary"
                            MinWidth="120"
                            Click="OnSaveClick" />
+                <fl:Button Content="恢复默认"
+                           Appearance="Secondary"
+                           MinWidth="100"
+                           Margin="8,0,0,0"
+                           Click="OnResetClick" />
                 <TextBlock x:Name="SaveStatusText"
                            VerticalAlignment="Center"
                            Margin="12,0,0,0"
@@ -61,15 +66,8 @@
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="采纳键"
-                                                ui:SettingRow.Description="Tab 在微软拼音里会调出 Bing 搜索，默认改用「·」。">
-                            <ComboBox x:Name="AcceptKeyComboBox" Width="220">
-                                <ComboBoxItem Content="·（数字 1 左侧）" Tag="Oem3" />
-                                <ComboBoxItem Content="Tab" Tag="Tab" />
-                                <ComboBoxItem Content=";（分号）" Tag="Semicolon" />
-                                <ComboBoxItem Content="\（反斜杠）" Tag="Backslash" />
-                                <ComboBoxItem Content="'（单引号）" Tag="Quote" />
-                                <ComboBoxItem Content="/（斜杠）" Tag="Slash" />
-                            </ComboBox>
+                                                ui:SettingRow.Description="点一下方框，然后按下想用的键。字母、空格、回车不能用；Tab 会调出 Bing 搜索，数字会盖过输入法同号候选。">
+                            <ui:KeyCaptureBox x:Name="StrictKeyBox" Width="220" />
                         </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
@@ -113,10 +111,86 @@
                         </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
-                                                Header="手动键位"
-                                                ui:SettingRow.Description="可填 1~9，最多 4 个，例如 6789。"
+                                                Header="采纳键"
+                                                ui:SettingRow.Description="点「添加按键」后直接按键；拖动左侧手柄调整顺序。第 1 个键对应浮窗第 1 行，最多 4 个；改动这里会自动切到手动指定。"
                                                 ui:SettingRow.ShowDivider="False">
-                            <TextBox x:Name="ExtendedKeysTextBox" Width="120" MaxLength="8" />
+                            <StackPanel Width="260">
+                                <ListBox x:Name="ExtendedKeysList"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         Padding="0"
+                                         HorizontalContentAlignment="Stretch"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                         PreviewMouseLeftButtonDown="OnExtendedKeysMouseDown"
+                                         PreviewMouseMove="OnExtendedKeysMouseMove"
+                                         PreviewMouseLeftButtonUp="OnExtendedKeysMouseUp"
+                                         LostMouseCapture="OnExtendedKeysLostCapture">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="Padding" Value="0" />
+                                            <Setter Property="Margin" Value="0" />
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="Background" Value="Transparent" />
+                                            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="ListBoxItem">
+                                                        <ContentPresenter />
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Height="32"
+                                                    Margin="0,0,0,6"
+                                                    Padding="8,0"
+                                                    Background="{DynamicResource ControlFillBrush}"
+                                                    BorderBrush="{DynamicResource ControlStrokeBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="{DynamicResource ControlCornerRadius}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <TextBlock Text="⋮⋮"
+                                                               VerticalAlignment="Center"
+                                                               Margin="0,0,10,0"
+                                                               Cursor="SizeAll"
+                                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+
+                                                    <TextBlock Grid.Column="1"
+                                                               Text="{Binding Label}"
+                                                               VerticalAlignment="Center"
+                                                               FontWeight="SemiBold" />
+
+                                                    <Button Grid.Column="2"
+                                                            Content="✕"
+                                                            Width="24"
+                                                            Height="24"
+                                                            Padding="0"
+                                                            Background="Transparent"
+                                                            BorderThickness="0"
+                                                            Cursor="Hand"
+                                                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                                            ToolTip="移除这个键"
+                                                            Click="OnRemoveExtendedKeyClick" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+
+                                <ui:KeyCaptureBox x:Name="AddExtendedKeyBox"
+                                                  Placeholder="＋ 添加按键"
+                                                  ClearAfterCapture="True"
+                                                  KeyCaptured="OnAddExtendedKeyCaptured"
+                                                  Margin="0,2,0,0" />
+                            </StackPanel>
                         </HeaderedContentControl>
                     </StackPanel>
                 </Border>

@@ -42,6 +42,8 @@ internal static class Program
 
     private const uint InputMouse = 0;
     private const uint MouseEventMove = 0x0001;
+    private const uint MouseEventLeftDown = 0x0002;
+    private const uint MouseEventLeftUp = 0x0004;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MouseInput
@@ -70,6 +72,37 @@ internal static class Program
         Mouse = new MouseInput { Dx = dx, Flags = MouseEventMove },
     };
 
+    /// <summary>把指针移到指定位置，并留出一点时间让 WPF 处理 MouseMove。</summary>
+    private static void ShowWindowAt(int x, int y)
+    {
+        SetCursorPos(x, y);
+        Thread.Sleep(60);
+    }
+
+    private static void SendMouse(uint flags) =>
+        SendInput(1, new[] { new MouseInputUnion { Type = InputMouse, Mouse = new MouseInput { Flags = flags } } }, Marshal.SizeOf<MouseInputUnion>());
+
+    /// <summary>解析逗号分隔的整数，数量必须是 count。</summary>
+    private static bool TryParseNumbers(string text, int count, out int[] values)
+    {
+        var parts = text.Split(',');
+        values = new int[count];
+        if (parts.Length != count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < count; i++)
+        {
+            if (!int.TryParse(parts[i], out values[i]))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
     private static int Main(string[] args)
     {
         Console.OutputEncoding = new UTF8Encoding(false);
@@ -83,6 +116,65 @@ internal static class Program
         Console.WriteLine(uiaReady
             ? "[UIA] 初始化成功"
             : "[UIA] 初始化失败，后续将无法读取候选窗");
+
+        // 鼠标命令单独起进程时，前台可能已经换成终端；--focus 让它在点击前先把目标切上来。
+        var mouseFocus = args.FirstOrDefault(a =>
+            a.StartsWith("--focus=", StringComparison.OrdinalIgnoreCase));
+        if (mouseFocus is not null)
+        {
+            var target = TargetWindow.Activate(mouseFocus["--focus=".Length..]);
+            Thread.Sleep(200);
+            var foreground = NativeMethods.GetForegroundWindow();
+            Console.WriteLine($"[鼠标] 目标=0x{target.ToInt64():X} 前台=0x{foreground.ToInt64():X} {WindowProcess.GetProcessName(foreground)}");
+        }
+
+        var clickArg = args.FirstOrDefault(a =>
+            a.StartsWith("--click=", StringComparison.OrdinalIgnoreCase));
+        if (clickArg is not null)
+        {
+            if (!TryParseNumbers(clickArg["--click=".Length..], 2, out var clickPoint))
+            {
+                Console.WriteLine("[鼠标] ✗ 坐标格式应为 --click=横,纵");
+                return 1;
+            }
+
+            ShowWindowAt(clickPoint[0], clickPoint[1]);
+            SendMouse(MouseEventLeftDown);
+            Thread.Sleep(40);
+            SendMouse(MouseEventLeftUp);
+            Console.WriteLine($"[鼠标] 已点击 ({clickPoint[0]},{clickPoint[1]})");
+            return 0;
+        }
+
+        var dragArg = args.FirstOrDefault(a =>
+            a.StartsWith("--drag=", StringComparison.OrdinalIgnoreCase));
+        if (dragArg is not null)
+        {
+            if (!TryParseNumbers(dragArg["--drag=".Length..], 4, out var drag) ||
+                drag[0] < 1 || drag[0] > 2000)
+            {
+                Console.WriteLine("[鼠标] ✗ 坐标格式应为 --drag=起横,起纵,终横,终纵");
+                return 1;
+            }
+
+            ShowWindowAt(drag[0], drag[1]);
+            Thread.Sleep(60);
+            SendMouse(MouseEventLeftDown);
+            Thread.Sleep(80);
+
+            // 分几步移动，WPF 要看到超过拖动阈值的 MouseMove 才会进入 DragDrop。
+            for (var step = 1; step <= 8; step++)
+            {
+                var x = drag[0] + (drag[2] - drag[0]) * step / 8;
+                var y = drag[1] + (drag[3] - drag[1]) * step / 8;
+                SetCursorPos(x, y);
+                Thread.Sleep(40);
+            }
+
+            SendMouse(MouseEventLeftUp);
+            Console.WriteLine($"[鼠标] 已拖动 ({drag[0]},{drag[1]}) → ({drag[2]},{drag[3]})");
+            return 0;
+        }
 
         if (args.Any(a => a.Equals("--nudge-mouse", StringComparison.OrdinalIgnoreCase)))
         {
@@ -277,6 +369,33 @@ internal static class Program
 
             _uiaWorker.Dispose();
             return exitCode;
+        }
+
+        var uiArg = args.FirstOrDefault(a =>
+            a.StartsWith("--ui-elements=", StringComparison.OrdinalIgnoreCase));
+        if (uiArg is not null)
+        {
+            // 用 UIA 的物理坐标定位控件，比照着截图估坐标可靠（截图会被 DPI 与窗口位置影响）。
+            var handle = TargetWindow.Activate(uiArg["--ui-elements=".Length..]);
+            if (handle == IntPtr.Zero)
+            {
+                Console.WriteLine("[UIA] 找不到目标窗口");
+                return 1;
+            }
+
+            foreach (var element in _reader.ReadAllElements(handle).Where(e => !e.IsOffscreen))
+            {
+                if (string.IsNullOrWhiteSpace(element.Name) && string.IsNullOrWhiteSpace(element.AutomationId))
+                {
+                    continue;
+                }
+
+                Console.WriteLine(
+                    $"type={element.ControlType,-4} ({element.Bounds.Left},{element.Bounds.Top}) " +
+                    $"{element.Bounds.Width}x{element.Bounds.Height}  name=\"{element.Name}\" id=\"{element.AutomationId}\"");
+            }
+
+            return 0;
         }
 
         if (args.Any(a => a.Equals("--reload-ime", StringComparison.OrdinalIgnoreCase)))

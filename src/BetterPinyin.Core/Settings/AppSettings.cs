@@ -48,8 +48,14 @@ public sealed class AppSettings
     /// <summary>扩展键位分配方式：<c>Auto</c> 接在本地候选之后，<c>Manual</c> 用 <see cref="ExtendedKeys"/>。</summary>
     public string ExtendedKeyMode { get; set; } = "Auto";
 
-    /// <summary>手动指定的扩展采纳键，例如 <c>6789</c>。</summary>
-    public string ExtendedKeys { get; set; } = "6789";
+    /// <summary>
+    /// 手动指定的扩展采纳键，逗号分隔的 WPF Key 标识，例如 <c>D6,D7,D8,D9</c>。
+    /// </summary>
+    /// <remarks>
+    /// 旧版本存的是数字串 <c>6789</c>，读取时仍兼容；新写入统一带上 <c>D</c> 前缀，
+    /// 这样同一个字段也能放功能键、小键盘键与标点。
+    /// </remarks>
+    public string ExtendedKeys { get; set; } = "D6,D7,D8,D9";
 
     /// <summary>浮窗位置：<c>Below</c> 候选窗下方，<c>Left</c> 候选窗左侧。</summary>
     public string OverlayPlacement { get; set; } = "Below";

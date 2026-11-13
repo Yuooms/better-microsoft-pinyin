@@ -625,7 +625,7 @@ internal sealed class CloudAssistController : IDisposable
 
         if (string.Equals(_settings.ExtendedKeyMode, "Manual", StringComparison.OrdinalIgnoreCase))
         {
-            var manual = KeyNames.ParseDigits(_settings.ExtendedKeys);
+            var manual = KeyNames.ParseExtendedKeys(_settings.ExtendedKeys);
             return manual.Where(key => key != strictKey).Take(max).ToArray();
         }
 
