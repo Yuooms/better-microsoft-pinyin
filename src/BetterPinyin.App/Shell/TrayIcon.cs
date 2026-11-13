@@ -45,7 +45,7 @@ internal sealed class TrayIcon : IDisposable
         _notifyIcon = new NotifyIcon
         {
             Icon = CreateIcon(),
-            Text = "Better 微软拼音 · 云联想",
+            Text = "Better 微软拼音",
             Visible = true,
             ContextMenuStrip = menu,
         };

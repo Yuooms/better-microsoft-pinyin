@@ -87,44 +87,104 @@
                         </StackPanel>
 
                         <Grid Height="184">
-                            <ItemsControl x:Name="ChartItems" VerticalAlignment="Stretch">
-                                <ItemsControl.ItemsPanel>
-                                    <ItemsPanelTemplate>
-                                        <UniformGrid Rows="1" />
-                                    </ItemsPanelTemplate>
-                                </ItemsControl.ItemsPanel>
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <Grid Margin="3,0">
-                                            <Grid.RowDefinitions>
-                                                <RowDefinition Height="*" />
-                                                <RowDefinition Height="Auto" />
-                                            </Grid.RowDefinitions>
-                                            <Rectangle Height="{Binding BarHeight}"
-                                                       Width="20"
-                                                       HorizontalAlignment="Center"
-                                                       VerticalAlignment="Bottom"
-                                                       RadiusX="3"
-                                                       RadiusY="3"
-                                                       Fill="{DynamicResource AccentBrush}"
-                                                       ToolTip="{Binding Tooltip}" />
-                                            <TextBlock Grid.Row="1"
-                                                       Text="{Binding Label}"
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <!-- 纵轴：只标 0、一半、最大值。标签与柱子的绘图区同高（150），
+                                 这样顶部标签就落在柱子上限的水平线上。 -->
+                            <Grid Grid.Column="0"
+                                  Width="28"
+                                  Height="150"
+                                  Margin="0,0,8,0"
+                                  VerticalAlignment="Top">
+                                <TextBlock x:Name="AxisMaxText"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Top"
+                                           FontSize="10"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock x:Name="AxisMidText"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Center"
+                                           FontSize="10"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="0"
+                                           HorizontalAlignment="Right"
+                                           VerticalAlignment="Bottom"
+                                           FontSize="10"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                            </Grid>
+
+                            <Grid Grid.Column="1">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="150" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <!-- 三条刻度线：顶=最大值、中=一半、底=0。
+                                     不参与命中测试，免得挡住柱子的提示。 -->
+                                <Grid Grid.Row="0" IsHitTestVisible="False">
+                                    <Rectangle Height="1" VerticalAlignment="Top"
+                                               Fill="{DynamicResource BorderBrush}" />
+                                    <Rectangle Height="1" VerticalAlignment="Center"
+                                               Fill="{DynamicResource BorderBrush}" />
+                                    <Rectangle Height="1" VerticalAlignment="Bottom"
+                                               Fill="{DynamicResource BorderBrush}" />
+                                </Grid>
+
+                                <ItemsControl x:Name="ChartItems" Grid.Row="0">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Rows="1" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Grid Margin="3,0">
+                                                <Rectangle Height="{Binding BarHeight}"
+                                                           Width="20"
+                                                           HorizontalAlignment="Center"
+                                                           VerticalAlignment="Bottom"
+                                                           RadiusX="3"
+                                                           RadiusY="3"
+                                                           Fill="{DynamicResource AccentBrush}"
+                                                           ToolTip="{Binding Tooltip}"
+                                                           ToolTipService.InitialShowDelay="0"
+                                                           ToolTipService.BetweenShowDelay="0"
+                                                           ToolTipService.ShowDuration="60000" />
+                                            </Grid>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+
+                                <TextBlock x:Name="EmptyText"
+                                           Grid.Row="0"
+                                           Text="这段时间还没有记录。打几个字试试。"
+                                           HorizontalAlignment="Center"
+                                           VerticalAlignment="Center"
+                                           Visibility="Collapsed"
+                                           Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+
+                                <!-- X 轴标签单独一行，与柱子共用 UniformGrid 的列宽，
+                                     这样绘图区可以严格等于 150px，纵轴刻度才对得上。 -->
+                                <ItemsControl x:Name="ChartLabels" Grid.Row="1">
+                                    <ItemsControl.ItemsPanel>
+                                        <ItemsPanelTemplate>
+                                            <UniformGrid Rows="1" />
+                                        </ItemsPanelTemplate>
+                                    </ItemsControl.ItemsPanel>
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Label}"
                                                        FontSize="10"
-                                                       Margin="0,6,0,0"
+                                                       Margin="3,6,3,0"
                                                        HorizontalAlignment="Center"
                                                        Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
-                                        </Grid>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-
-                            <TextBlock x:Name="EmptyText"
-                                       Text="这段时间还没有记录。打几个字试试。"
-                                       HorizontalAlignment="Center"
-                                       VerticalAlignment="Center"
-                                       Visibility="Collapsed"
-                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </Grid>
                         </Grid>
 
                         <TextBlock x:Name="ChartHint"

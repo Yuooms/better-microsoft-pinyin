@@ -55,12 +55,16 @@ public partial class SettingsWindow : FluentWindow, INavigationWindow
         _navigation = new NavigationService(_pageProvider);
         _navigation.SetNavigationControl(RootNavigation);
 
+        // 顺序即导航顺序：常规在最前，功能模块按注册顺序排在中间，
+        // 外壳的外观与页脚项收在最后。功能模块自己无法决定排在哪，
+        // 只能由外壳决定，所以「常规」必须在这里先加。
+        AddPage("常规", "\uE713", typeof(GeneralPage), () => new GeneralPage(), footer: false);
+
         foreach (var page in registry.AllSettingsPages)
         {
             AddPage(page.Title, page.Glyph, page.ViewType, page.CreateView, footer: false);
         }
 
-        AddPage("常规", "\uE713", typeof(GeneralPage), () => new GeneralPage(), footer: false);
         AddPage("外观", "\uE790", typeof(AppearancePage), () => new AppearancePage(), footer: false);
         AddPage("网络与环境", "\uE774", typeof(NetworkPage), () => new NetworkPage(), footer: true);
         AddPage("关于", "\uE946", typeof(AboutPage), () => new AboutPage(), footer: true);

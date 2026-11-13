@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using System.Text;
 using BetterPinyin.Contracts;
 using BetterPinyin.Core.Wordbook;
@@ -33,6 +34,42 @@ internal static class Program
     private static string _lastSnapshotSignature = string.Empty;
     private static bool _dumpRequested;
 
+    [DllImport("user32.dll")]
+    private static extern bool SetCursorPos(int x, int y);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint SendInput(uint nInputs, MouseInputUnion[] pInputs, int cbSize);
+
+    private const uint InputMouse = 0;
+    private const uint MouseEventMove = 0x0001;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MouseInput
+    {
+        public int Dx;
+        public int Dy;
+        public uint MouseData;
+        public uint Flags;
+        public uint Time;
+        public IntPtr ExtraInfo;
+    }
+
+    [StructLayout(LayoutKind.Explicit)]
+    private struct MouseInputUnion
+    {
+        [FieldOffset(0)]
+        public uint Type;
+
+        [FieldOffset(8)]
+        public MouseInput Mouse;
+    }
+
+    private static MouseInputUnion CreateMouseMove(int dx) => new()
+    {
+        Type = InputMouse,
+        Mouse = new MouseInput { Dx = dx, Flags = MouseEventMove },
+    };
+
     private static int Main(string[] args)
     {
         Console.OutputEncoding = new UTF8Encoding(false);
@@ -46,6 +83,37 @@ internal static class Program
         Console.WriteLine(uiaReady
             ? "[UIA] 初始化成功"
             : "[UIA] 初始化失败，后续将无法读取候选窗");
+
+        if (args.Any(a => a.Equals("--nudge-mouse", StringComparison.OrdinalIgnoreCase)))
+        {
+            // SetCursorPos 只改坐标，不算"用户输入"，唤不醒关掉的显示器。
+            // 这里走 SendInput 的相对移动：位置回到原处，但系统会认为有人在动鼠标。
+            var ok = SendInput(2, new[] { CreateMouseMove(1), CreateMouseMove(-1) }, Marshal.SizeOf<MouseInputUnion>());
+            Console.WriteLine(ok == 2 ? "[鼠标] 已发送一次真实移动（用于唤醒显示）" : "[鼠标] ✗ 发送失败");
+            return ok == 2 ? 0 : 1;
+        }
+
+        var mouseArg = args.FirstOrDefault(a =>
+            a.StartsWith("--move-mouse=", StringComparison.OrdinalIgnoreCase));
+        if (mouseArg is not null)
+        {
+            // 悬停状态没法靠截图命令造出来，只能真的把指针移过去。
+            // 配合 --activate-app 与 --shot-window 就能验证 ToolTip 与 hover 动画。
+            var parts = mouseArg["--move-mouse=".Length..].Split(',');
+            if (parts.Length != 2 ||
+                !int.TryParse(parts[0], out var mouseX) ||
+                !int.TryParse(parts[1], out var mouseY))
+            {
+                Console.WriteLine("[鼠标] ✗ 坐标格式应为 --move-mouse=横,纵");
+                return 1;
+            }
+
+            var moved = SetCursorPos(mouseX, mouseY);
+            Console.WriteLine(moved
+                ? $"[鼠标] 已移动到 ({mouseX},{mouseY})"
+                : $"[鼠标] ✗ 移动失败，错误码 {Marshal.GetLastWin32Error()}");
+            return moved ? 0 : 1;
+        }
 
         var hotkeyArg = args.FirstOrDefault(a =>
             a.StartsWith("--hotkey=", StringComparison.OrdinalIgnoreCase));

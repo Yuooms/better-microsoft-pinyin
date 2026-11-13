@@ -274,6 +274,7 @@ public partial class StatisticsPage : Page
         var useLetters = MetricCombo.SelectedIndex == 1;
         var values = points.Select(p => ReadValue(days, p, useLetters)).ToArray();
         var max = values.Length == 0 ? 0 : values.Max();
+        var axisMax = ChooseAxisMax(max);
 
         var bars = new List<ChartBar>(points.Count);
         for (var i = 0; i < points.Count; i++)
@@ -287,18 +288,24 @@ public partial class StatisticsPage : Page
             bars.Add(new ChartBar
             {
                 Label = showLabel ? points[i].Label : string.Empty,
-                BarHeight = max == 0 || values[i] == 0
+                BarHeight = values[i] == 0
                     ? 0
-                    : Math.Max(3, values[i] / (double)max * ChartHeight),
+                    : Math.Max(3, values[i] / (double)axisMax * ChartHeight),
                 Tooltip = $"{when}　{values[i]}",
             });
         }
 
         ChartItems.ItemsSource = bars;
+        ChartLabels.ItemsSource = bars;
+
+        // 纵轴只标三档：上限、一半、0。上限保证是偶数，一半才不会出现小数。
+        AxisMaxText.Text = axisMax.ToString(CultureInfo.InvariantCulture);
+        AxisMidText.Text = (axisMax / 2).ToString(CultureInfo.InvariantCulture);
 
         var hasData = max > 0;
         EmptyText.Visibility = hasData ? Visibility.Collapsed : Visibility.Visible;
         ChartItems.Visibility = hasData ? Visibility.Visible : Visibility.Collapsed;
+        ChartLabels.Visibility = hasData ? Visibility.Visible : Visibility.Collapsed;
 
         ChartHint.Text = useLetters
             ? "柱高 = 拼音字母数。只统计中文布局下、落在组字串里的字母，不含退格与直接上屏的英文。"
@@ -375,6 +382,35 @@ public partial class StatisticsPage : Page
         };
 
         DataInfoText.Text = $"{_feature.FilePath}\n{size}　{days.Count} 天记录";
+    }
+
+    /// <summary>
+    /// 选一个"好看"的纵轴上限。
+    /// </summary>
+    /// <param name="max">这段时间里的最大值。</param>
+    /// <returns>上限，保证是不小于 4 的偶数。</returns>
+    /// <remarks>
+    /// 只取 1/2/4/6/8×10ⁿ 这几档：刻度少、间隔是整数，一半也不会出现 7.5 这种值。
+    /// 上限比最大值略高是正常的——柱子顶到天花板反而不易看出差距。
+    /// </remarks>
+    private static int ChooseAxisMax(int max)
+    {
+        if (max <= 4)
+        {
+            return 4;
+        }
+
+        var magnitude = Math.Pow(10, Math.Floor(Math.Log10(max)));
+        foreach (var factor in new[] { 1.0, 2, 4, 6, 8, 10 })
+        {
+            var candidate = factor * magnitude;
+            if (candidate >= max)
+            {
+                return (int)candidate;
+            }
+        }
+
+        return (int)(10 * magnitude);
     }
 
     /// <summary>按当前范围算出要展示的点。</summary>

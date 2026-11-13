@@ -61,6 +61,21 @@ dotnet run --project tools/ImeProbe -- --shot-window=Better\ 微软拼音 --shot
 
 `--self-test` 的退出码：`0` 成功，`4` 没找到候选窗，`6` 前台抢焦失败（此时不会发送任何按键）。
 
+悬停效果（ToolTip、hover 动画）需要指针真的停在控件上，用这两个命令组合验证：
+
+```bash
+# 把设置窗口移到左上角、指针移到 LOGO 上，再截窗口
+dotnet run --project tools/ImeProbe -- --activate-app --move-app=0,0,1080,720
+dotnet run --project tools/ImeProbe -- --move-mouse=317,277
+dotnet run --project tools/ImeProbe -- --shot-window="Better 微软拼音" --shot=hover.bmp
+
+# 显示器休眠时离屏渲染会出全白图，先发一次真实鼠标移动把它唤醒
+dotnet run --project tools/ImeProbe -- --nudge-mouse
+```
+
+注意 `--move-mouse` 走的是 `SetCursorPos`：它能触发 WPF 的 `MouseEnter`（可以验证 hover 动画），
+但不算"用户输入"，驱动不了 ToolTip 的悬停计时，所以提示框的**延迟**只能靠真人验证。
+
 新增的几件工具：
 
 ```bash
