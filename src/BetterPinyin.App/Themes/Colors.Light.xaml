@@ -43,6 +43,7 @@
     <SolidColorBrush x:Key="FlyoutStrokeBrush" Color="#E5E5E5" />
 
     <!-- 外壳分层：导航透出材质，内容区接近不透明保证长文本可读 -->
+    <SolidColorBrush x:Key="WindowGlassBrush" Color="#99F5F5F5" />
     <SolidColorBrush x:Key="ShellGlassBrush" Color="#B3F3F3F3" />
     <SolidColorBrush x:Key="ContentGlassBrush" Color="#D9FDFDFD" />
 

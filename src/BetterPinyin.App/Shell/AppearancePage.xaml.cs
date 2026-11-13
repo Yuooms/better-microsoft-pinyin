@@ -37,6 +37,15 @@ public partial class AppearancePage : Page
             ThemeComboBox,
             AppearanceOptions.ToSettingValue(AppearanceOptions.ParseTheme(Settings.ThemeMode)));
 
+        // 不支持的机器上开关必须是「关 + 不可点」，否则会显示成「开着但没效果」。
+        var materialSupported = Backdrop.SupportsSystemBackdrop;
+        MaterialToggle.IsEnabled = materialSupported;
+        MaterialToggle.IsChecked = materialSupported &&
+            AppearanceOptions.ParseBackdropMode(Settings.BackdropMode) != BackdropMode.Solid;
+        MaterialHintText.Text = materialSupported
+            ? "Mica 由系统合成，几乎不影响性能；窗口会透出壁纸的颜色与明暗。"
+            : "当前系统不支持系统材质（需要 Windows 11 22H2 及以上），窗口使用纯色底。";
+
         BackgroundToggle.IsChecked = Settings.BackgroundImageEnabled &&
             !string.IsNullOrWhiteSpace(Settings.BackgroundImagePath);
         OpacitySlider.Value = Math.Clamp(Settings.BackgroundImageOpacity, 0.1, 1.0);
@@ -57,6 +66,20 @@ public partial class AppearancePage : Page
         AppServices.SaveSettings();
 
         ThemeManager.SetPreference(theme);
+    }
+
+    private void OnMaterialToggleChanged(object sender, RoutedEventArgs e)
+    {
+        if (_loading)
+        {
+            return;
+        }
+
+        Settings.BackdropMode = AppearanceOptions.ToSettingValue(
+            MaterialToggle.IsChecked == true ? BackdropMode.Auto : BackdropMode.Solid);
+        AppServices.SaveSettings();
+
+        (Window.GetWindow(this) as SettingsWindow)?.RefreshWindowMaterial();
     }
 
     private void OnBackgroundToggleChanged(object sender, RoutedEventArgs e)

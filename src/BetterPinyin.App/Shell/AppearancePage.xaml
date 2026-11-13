@@ -33,6 +33,26 @@
                 </StackPanel>
             </Border>
 
+            <fl:TextBlock Text="窗口材质" FontTypography="BodyStrong" Margin="0,20,0,8" />
+            <Border Style="{StaticResource Card}">
+                <StackPanel>
+                    <HeaderedContentControl Style="{StaticResource SettingRow}"
+                                            Header="使用系统材质"
+                                            ui:SettingRow.Description="让桌面壁纸透过窗口，形成 Win11 的亚克力质感。关闭则使用纯色底。"
+                                            ui:SettingRow.ShowDivider="False">
+                        <fl:ToggleSwitch x:Name="MaterialToggle"
+                                         AutomationProperties.Name="使用系统材质"
+                                         Checked="OnMaterialToggleChanged"
+                                         Unchecked="OnMaterialToggleChanged" />
+                    </HeaderedContentControl>
+                </StackPanel>
+            </Border>
+            <TextBlock x:Name="MaterialHintText"
+                       Style="{StaticResource Hint}"
+                       FontSize="13"
+                       Margin="2,8,0,0"
+                       TextWrapping="Wrap" />
+
             <fl:TextBlock Text="窗口背景" FontTypography="BodyStrong" Margin="0,20,0,8" />
             <Border Style="{StaticResource Card}">
                 <StackPanel>
@@ -113,7 +133,7 @@
                           Foreground="{DynamicResource TextFillColorTertiaryBrush}"
                           Margin="0,16,0,0"
                           TextWrapping="Wrap"
-                          Text="说明：设置窗口使用 WPF-UI 的 Fluent 控件。Windows 10 不支持 Mica / 亚克力，窗口底色统一为纯色；背景图是提升观感的主要方式。" />
+                          Text="说明：窗口材质需要 Windows 11 22H2（build 22621）及以上；Windows 10 与更早的 Windows 11 始终使用纯色底，自定义背景图在那里是提升观感的主要方式。" />
 
         </StackPanel>
     </ScrollViewer>

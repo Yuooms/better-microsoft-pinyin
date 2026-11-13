@@ -41,6 +41,7 @@
     <SolidColorBrush x:Key="FlyoutStrokeBrush" Color="#3A3A3A" />
 
     <!-- 外壳分层 -->
+    <SolidColorBrush x:Key="WindowGlassBrush" Color="#99202020" />
     <SolidColorBrush x:Key="ShellGlassBrush" Color="#B3202020" />
     <SolidColorBrush x:Key="ContentGlassBrush" Color="#D92B2B2B" />
 

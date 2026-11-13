@@ -12,21 +12,29 @@
                  ExtendsContentIntoTitleBar="True"
                  WindowBackdropType="None"
                  WindowCornerPreference="Round"
-                 Background="{DynamicResource ApplicationBackgroundBrush}"
+                 Background="Transparent"
                  FontFamily="Microsoft YaHei UI, Segoe UI">
 
     <!--
         标题栏与导航都由 WPF-UI 绘制：
         - FluentWindow 内部设置 WindowChrome（CaptionHeight=0、ResizeBorderThickness=4），
           TitleBar 自己处理 WM_NCHITTEST，不要再叠加 DwmExtendFrameIntoClientArea。
-        - WindowBackdropType 固定 None：Windows 10 上非 None 会走无效的 MICA_EFFECT，
-          还会和背景图抢画刷；材质由 Shell/Backdrop.cs 只负责候选浮窗。
+        - 材质走 WPF-UI 的 WindowBackdropType（见 SettingsWindow.RefreshWindowMaterial）：
+          Windows 11 22H2 及以上设 Mica，其余保持 None 并用纯色底。
+          材质打开时窗口背景是透明的，可读性靠最底下那层 MaterialTint 着色。
     -->
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
+
+        <!-- 材质着色层：在窗口透明背景之上、内容之下。纯色模式下整层隐藏。 -->
+        <Border x:Name="MaterialTint"
+                Grid.RowSpan="2"
+                Background="{DynamicResource WindowGlassBrush}"
+                IsHitTestVisible="False"
+                Visibility="Collapsed" />
 
         <!-- 背景图：在窗口底色之上、标题栏与内容之下；不参与命中测试。 -->
         <Image x:Name="BackgroundImage"
@@ -46,7 +54,7 @@
 
         <ui:NavigationView x:Name="RootNavigation"
                            Grid.Row="1"
-                           Background="{DynamicResource ApplicationBackgroundBrush}"
+                           Background="Transparent"
                            OpenPaneLength="160"
                            IsBackButtonVisible="Collapsed"
                            IsPaneToggleVisible="True"

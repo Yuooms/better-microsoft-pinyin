@@ -31,7 +31,7 @@ python tools/Release/zip_release.py
 版本号从 `Directory.Build.props` 读取，不需要手改脚本。
 
 > 包名要保持 `*win-x64.zip` 的形状：程序内置的更新检查按「名字带 win、以 .zip 结尾」挑附件，
-> 改名会让老版本的「下载并安装」找不到文件。
+> 改名会让老版本的更新检查找不到仓库与附件。
 
 ## 发布前检查
 

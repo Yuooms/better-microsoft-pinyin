@@ -101,11 +101,12 @@ public sealed class AppSettings
     public string ThemeMode { get; set; } = "System";
 
     /// <summary>
-    /// 窗口背景：<c>Auto</c> / <c>Solid</c> / <c>Acrylic</c>。
+    /// 设置窗口的窗口材质：<c>Auto</c> 跟随系统能力（Windows 11 22H2 及以上用 Mica，其余纯色），
+    /// <c>Solid</c> 始终纯色。
     /// </summary>
     /// <remarks>
-    /// 已停用，仅保留读取以兼容旧配置。设置窗口现在由 WPF-UI 负责外观，
-    /// 材质不再由本程序切换；候选浮窗的样式见 <see cref="PopupStyle"/>。
+    /// 只影响设置窗口。候选浮窗始终按自己的 <see cref="PopupStyle"/> 走亚克力或实色，
+    /// 因为它贴在候选条旁边，纯色会显得比输入法本身更"重"。
     /// </remarks>
     public string BackdropMode { get; set; } = "Auto";
 

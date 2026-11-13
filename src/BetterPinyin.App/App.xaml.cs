@@ -102,7 +102,8 @@ public partial class App : Application
             _registry.Register(_statistics);
 
             _trayIcon = new TrayIcon(
-                onOpenSettings: ShowSettings,
+                onOpenSettings: () => ShowSettings(),
+                onOpenAbout: () => ShowSettings("关于"),
                 onToggle: OnToggleEnabled,
                 onExit: Shutdown,
                 initiallyEnabled: AppServices.Settings.CloudAssistEnabled);
@@ -246,7 +247,7 @@ public partial class App : Application
 
         _trayIcon?.ShowBalloon(
             $"发现新版本 {outcome.Latest?.Tag}",
-            "打开设置 → 关于，可以下载并安装");
+            "打开设置 → 关于，可以手动下载（不会自动下载）");
     }
 
     /// <summary>
@@ -332,7 +333,11 @@ public partial class App : Application
         }
     }
 
-    private void ShowSettings()
+    /// <summary>
+    /// 打开设置窗口。
+    /// </summary>
+    /// <param name="page">要定位到的页面标题；为空时沿用命令行指定的页。</param>
+    private void ShowSettings(string? page = null)
     {
         try
         {
@@ -355,9 +360,10 @@ public partial class App : Application
 
             Log.Write("设置窗口已打开");
 
-            if (_startupPage is not null)
+            var target = page ?? _startupPage;
+            if (target is not null)
             {
-                _settingsWindow.SelectPage(_startupPage);
+                _settingsWindow.SelectPage(target);
                 _startupPage = null;
             }
         }

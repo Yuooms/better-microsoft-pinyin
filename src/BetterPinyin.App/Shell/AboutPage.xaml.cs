@@ -28,6 +28,7 @@ public partial class AboutPage : Page
         AboutVersionText.Text = $"版本 {version?.ToString(3) ?? "0.1.0"}";
         UpdateTitleText.Text = $"检查 GitHub 上的最新发布（当前 {version?.ToString(3) ?? "0.1.0"}）";
         UpdateAutoCheckSwitch.IsChecked = AppServices.Settings.UpdateCheckEnabled;
+        RefreshCacheInfo();
 
         // 页面里的超链接是可聚焦元素：导航进来时 WPF 会把它 BringIntoView，
         // 导致页面一打开就跳到下方的作者信息。等布局和焦点都稳定后再回到顶部。
@@ -149,6 +150,10 @@ public partial class AboutPage : Page
 
     private void ShowUpdateOutcome(UpdateCheckOutcome outcome)
     {
+        // 每次换结论都重画缓存区：缓存里可能还留着上一个版本，
+        // 这里显示的必须是「现在这个局面」下的真实状态。
+        RefreshCacheInfo();
+
         if (!outcome.Succeeded || outcome.Latest is null)
         {
             _latestRelease = null;
@@ -170,17 +175,74 @@ public partial class AboutPage : Page
         }
 
         var date = outcome.Latest.PublishedAt?.ToLocalTime().ToString("yyyy-MM-dd");
-        UpdateStatusText.Text = string.IsNullOrEmpty(date)
-            ? $"发现新版本 {outcome.Latest.Tag}，可以下载替换当前版本"
-            : $"发现新版本 {outcome.Latest.Tag}（{date}），可以下载替换当前版本";
-
         UpdateActionsPanel.Visibility = Visibility.Visible;
+        UpdateApplyState();
+        UpdateStatusText.Text = BuildUpdateStatus(outcome.Latest, date);
+    }
+
+    /// <summary>刷新「下载 / 安装」两个按钮的可见性。</summary>
+    /// <remarks>
+    /// 下载与安装分成两步：下载只往缓存目录写文件，装不装、什么时候装由用户决定。
+    /// 这样更新包看得见、删得掉，也不会出现「点一下程序就没了」。
+    /// </remarks>
+    private void UpdateApplyState()
+    {
+        if (_latestRelease is null)
+        {
+            return;
+        }
+
+        var downloaded = UpdateService.IsDownloaded(_latestRelease);
+        DownloadUpdateButton.Visibility = downloaded ? Visibility.Collapsed : Visibility.Visible;
+        ApplyUpdateButton.Visibility = downloaded ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static string BuildUpdateStatus(ReleaseInfo release, string? date)
+    {
+        var headline = string.IsNullOrEmpty(date)
+            ? $"发现新版本 {release.Tag}"
+            : $"发现新版本 {release.Tag}（{date}）";
+
+        return UpdateService.IsDownloaded(release)
+            ? $"{headline}，已下载到本地，点「安装并重启」完成更新。"
+            : $"{headline}，点「下载更新」保存到本地，下载完再决定是否安装。";
+    }
+
+    /// <summary>刷新缓存大小与路径。</summary>
+    private void RefreshCacheInfo()
+    {
+        var size = UpdateService.GetCacheSize();
+        UpdateCacheSizeText.Text = size > 0
+            ? $"更新缓存：{FormatSize(size)}"
+            : "更新缓存：空";
+        UpdateCachePathText.Text = UpdateService.CacheRoot;
+        ClearCacheButton.IsEnabled = size > 0;
+    }
+
+    private static string FormatSize(long bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB" };
+        double value = bytes;
+        var unit = 0;
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
+        }
+
+        return unit == 0
+            ? $"{bytes} B"
+            : $"{value:0.#} {units[unit]}";
     }
 
     /// <summary>
-    /// 下载并安装：解压到临时目录后交给替换脚本，本进程退出让它接管。
+    /// 下载更新包到缓存目录。
     /// </summary>
-    private async void OnInstallUpdateClick(object sender, RoutedEventArgs e)
+    /// <remarks>
+    /// 只下载、不安装：文件落在「关于」页显示的那个路径下，
+    /// 用户可以先确认版本号、也可以随时清掉，装不装由下一次点击决定。
+    /// </remarks>
+    private async void OnDownloadUpdateClick(object sender, RoutedEventArgs e)
     {
         if (_updateBusy || _latestRelease is null)
         {
@@ -188,18 +250,56 @@ public partial class AboutPage : Page
         }
 
         _updateBusy = true;
-        InstallUpdateButton.IsEnabled = false;
+        DownloadUpdateButton.IsEnabled = false;
         UpdateProgressBar.Value = 0;
         UpdateProgressBar.Visibility = Visibility.Visible;
-        UpdateStatusText.Text = $"正在下载 {_latestRelease.Tag}…";
+        UpdateStatusText.Text = $"正在下载 {_latestRelease.Tag} 到 {UpdateService.CacheRoot}…";
 
         try
         {
             var progress = new Progress<double>(value => UpdateProgressBar.Value = value);
-            var directory = await AppServices.Updates.DownloadAsync(
-                _latestRelease,
-                progress,
-                CancellationToken.None);
+            await AppServices.Updates.DownloadAsync(_latestRelease, progress, CancellationToken.None);
+
+            RefreshCacheInfo();
+            UpdateApplyState();
+
+            var size = UpdateService.GetCacheSize();
+            UpdateStatusText.Text =
+                $"已下载 {_latestRelease.Tag}（{FormatSize(size)}）。点「安装并重启」完成更新，程序会自动退出再启动。";
+            Log.Write($"更新包已下载到 {UpdateService.GetReleaseDirectory(_latestRelease.Tag)}，等待用户确认安装");
+        }
+        catch (Exception ex) when (
+            ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException)
+        {
+            UpdateStatusText.Text = $"下载失败：{ex.Message}";
+            Log.Write($"下载更新失败：{ex.GetType().Name} {ex.Message}");
+        }
+        finally
+        {
+            _updateBusy = false;
+            DownloadUpdateButton.IsEnabled = true;
+            UpdateProgressBar.Visibility = Visibility.Collapsed;
+        }
+    }
+
+    /// <summary>
+    /// 用缓存里的更新包替换当前安装目录，然后退出让脚本接管。
+    /// </summary>
+    private async void OnApplyUpdateClick(object sender, RoutedEventArgs e)
+    {
+        if (_updateBusy || _latestRelease is null)
+        {
+            return;
+        }
+
+        _updateBusy = true;
+        ApplyUpdateButton.IsEnabled = false;
+
+        try
+        {
+            var directory = Path.Combine(
+                UpdateService.GetReleaseDirectory(_latestRelease.Tag),
+                "app");
 
             if (AppServices.Updates.TryApplyAndRestart(_latestRelease, directory, out var message))
             {
@@ -215,18 +315,47 @@ public partial class AboutPage : Page
             UpdateStatusText.Text = message;
             Log.Write($"未能自动更新：{message}");
         }
-        catch (Exception ex) when (
-            ex is HttpRequestException or IOException or InvalidOperationException or UnauthorizedAccessException)
-        {
-            UpdateStatusText.Text = $"下载失败：{ex.Message}";
-            Log.Write($"下载更新失败：{ex.GetType().Name} {ex.Message}");
-        }
         finally
         {
             _updateBusy = false;
-            InstallUpdateButton.IsEnabled = true;
-            UpdateProgressBar.Visibility = Visibility.Collapsed;
+            ApplyUpdateButton.IsEnabled = true;
         }
+    }
+
+    private void OnOpenCacheFolderClick(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            Directory.CreateDirectory(UpdateService.CacheRoot);
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{UpdateService.CacheRoot}\"")
+            {
+                UseShellExecute = true,
+            });
+        }
+        catch (Exception ex) when (ex is IOException or System.ComponentModel.Win32Exception)
+        {
+            UpdateStatusText.Text = $"打不开缓存目录：{ex.Message}";
+            Log.Write($"打开更新缓存目录失败：{ex.GetType().Name} {ex.Message}");
+        }
+    }
+
+    private void OnClearCacheClick(object sender, RoutedEventArgs e)
+    {
+        var size = UpdateService.ClearCache();
+        RefreshCacheInfo();
+        UpdateApplyState();
+
+        if (_latestRelease is not null)
+        {
+            var date = _latestRelease.PublishedAt?.ToLocalTime().ToString("yyyy-MM-dd");
+            UpdateStatusText.Text = BuildUpdateStatus(_latestRelease, date);
+        }
+
+        var note = size > 0 ? $"已清理 {FormatSize(size)} 缓存。" : "缓存本来就是空的。";
+        var baseText = UpdateStatusText.Text;
+        UpdateStatusText.Text = baseText.EndsWith("。", StringComparison.Ordinal)
+            ? baseText + note
+            : $"{baseText}。{note}";
     }
 
     private void OnOpenReleaseClick(object sender, RoutedEventArgs e)

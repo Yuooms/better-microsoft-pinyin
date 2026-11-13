@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Net;
 using System.Net.Http;
 using System.Reflection;
@@ -46,6 +47,18 @@ internal sealed class UpdateService
     private static readonly TimeSpan DownloadTimeout = TimeSpan.FromMinutes(10);
 
     private readonly HttpClient _httpClient;
+
+    /// <summary>
+    /// 更新包的缓存目录。
+    /// </summary>
+    /// <remarks>
+    /// 放在 LocalApplicationData 而不是 %TEMP%：用户要能在「关于」页看到路径、
+    /// 打开文件夹、手动删掉；临时目录会被清理工具整片扫走，也不适合当作可复用的位置。
+    /// </remarks>
+    public static string CacheRoot { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "BetterPinyin",
+        "updates");
 
     /// <summary>创建服务。</summary>
     /// <param name="httpClient">共享的 HTTP 客户端。</param>
@@ -151,7 +164,7 @@ internal sealed class UpdateService
         var asset = release.FindWindowsPackage()
             ?? throw new InvalidOperationException("这次发布里没有 Windows 压缩包");
 
-        var root = Path.Combine(Path.GetTempPath(), "BetterPinyin", "update", SafeName(release.Tag));
+        var root = GetReleaseDirectory(release.Tag);
         if (Directory.Exists(root))
         {
             Directory.Delete(root, recursive: true);
@@ -193,6 +206,83 @@ internal sealed class UpdateService
         ZipFile.ExtractToDirectory(zipPath, extractDirectory, overwriteFiles: true);
         File.Delete(zipPath);
         return extractDirectory;
+    }
+
+    /// <summary>某个版本在本地缓存里的目录。</summary>
+    /// <param name="tag">发布标签。</param>
+    /// <returns>目录绝对路径（不一定存在）。</returns>
+    public static string GetReleaseDirectory(string tag) => Path.Combine(CacheRoot, SafeName(tag));
+
+    /// <summary>
+    /// 该版本的安装包是否已经下载并解压好。
+    /// </summary>
+    /// <param name="release">发布信息。</param>
+    /// <returns>已缓存返回 true。</returns>
+    /// <remarks>
+    /// 只认「解压目录里至少有一个 exe」：下载中断会留下空目录或半个 zip，
+    /// 那种情况必须重新下，不能当成已就绪。
+    /// </remarks>
+    public static bool IsDownloaded(ReleaseInfo release)
+    {
+        var directory = Path.Combine(GetReleaseDirectory(release.Tag), "app");
+        try
+        {
+            return Directory.Exists(directory) &&
+                Directory.EnumerateFiles(directory, "*.exe", SearchOption.TopDirectoryOnly).Any();
+        }
+        catch (IOException)
+        {
+            return false;
+        }
+    }
+
+    /// <summary>缓存目录当前占用的字节数。</summary>
+    /// <returns>总大小；目录不存在时为 0。</returns>
+    public static long GetCacheSize() => GetDirectorySize(CacheRoot);
+
+    /// <summary>
+    /// 删除整个更新缓存。
+    /// </summary>
+    /// <returns>清理掉的字节数。</returns>
+    /// <remarks>
+    /// 只删自己的缓存目录，不碰安装目录。删不掉（文件被占用）时返回已删除的部分，
+    /// 调用方据此给提示，不抛异常——清理缓存失败不值得打断用户。
+    /// </remarks>
+    public static long ClearCache()
+    {
+        var size = GetCacheSize();
+        try
+        {
+            if (Directory.Exists(CacheRoot))
+            {
+                Directory.Delete(CacheRoot, recursive: true);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.Write($"清理更新缓存失败：{ex.GetType().Name} {ex.Message}");
+        }
+
+        return size;
+    }
+
+    private static long GetDirectorySize(string directory)
+    {
+        try
+        {
+            if (!Directory.Exists(directory))
+            {
+                return 0;
+            }
+
+            return new DirectoryInfo(directory)
+                .EnumerateFiles("*", SearchOption.AllDirectories)
+                .Sum(file => file.Length);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return 0;
+        }
     }
 
     /// <summary>

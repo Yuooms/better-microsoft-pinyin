@@ -112,11 +112,11 @@
 关于页 [检查更新] ──┐
 启动时（每天≤1 次）─┴→ UpdateService.CheckAsync → GitHub releases/latest
                                                  │
-                          有正式版更新 → 显示 [下载并安装] / 托盘气泡
+                  有正式版更新 → 只提示（关于页显示 [下载更新] / 托盘气泡），不自动下载
                                                  │
-                     DownloadAsync：%TEMP%\BetterPinyin\update\<tag> 下载 + 解压
+                     用户点 [下载更新] → DownloadAsync：%LOCALAPPDATA%\BetterPinyin\updates\<tag> 下载 + 解压
                                                  │
-                     TryApplyAndRestart：写 apply-update.cmd，起 cmd.exe，然后退出
+                     用户点 [安装并重启] → TryApplyAndRestart：写 apply-update.cmd，起 cmd.exe，然后退出
                                                  │
                      cmd 等本进程退出 → robocopy 覆盖安装目录 → 重启 → 自删
 ```
@@ -153,8 +153,11 @@ src/BetterPinyin.App/Shell/
 ```
 
 设置窗口的外观由 **WPF-UI 4.3.0** 负责：`ui:FluentWindow` + `ui:TitleBar` +
-`ui:NavigationView`，`WindowBackdropType=None`。Windows 10 不支持 Mica / 亚克力，
-所以底色统一为 `ApplicationBackgroundBrush`，观感靠「自定义背景图」补。
+`ui:NavigationView`。窗口材质走 WPF-UI 的 `WindowBackdropType`：Windows 11 22H2
+及以上用 Mica，其余（含 Windows 10）保持 `None` 并用纯色底。材质与可读性分开处理——
+`MaterialTint` 层用 60% 的 `WindowGlassBrush` 着色，`NavigationViewContentBackground`
+在内容区叠 85% 的 `ContentGlassBrush`（有背景图时让开）。为什么不用自己调
+`DwmSetWindowAttribute`，见 [TECH-NOTES 第二十二节](TECH-NOTES.md)。
 
 三条约束：
 
@@ -173,6 +176,6 @@ src/BetterPinyin.App/Shell/
 | 用户词库 | `%APPDATA%\BetterPinyin\words.json`（采纳过哪些云词，用于浮窗排序与回写短语） |
 | 输入统计 | `%APPDATA%\BetterPinyin\statistics.json`（默认关闭） |
 | 日志 | `%LOCALAPPDATA%\BetterPinyin\logs\app.log`（超过 1MB 滚动） |
-| 更新临时目录 | `%TEMP%\BetterPinyin\update\<tag>\`（下载包、解压结果与 `update.log`，安装完由脚本删除） |
+| 更新缓存 | `%LOCALAPPDATA%\BetterPinyin\updates\<tag>\`（下载包、解压结果与 `update.log`；安装完由脚本删除，也可以通过「关于」页手动清理） |
 
 设置写入采用「临时文件 + 替换」，避免断电留下半个文件；读取失败退回默认值并在诊断页显示原因。

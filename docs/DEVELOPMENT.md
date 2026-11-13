@@ -128,7 +128,7 @@ dotnet run --project src/BetterPinyin.App -- --page=关于
 注意两点：
 
 1. `LastUpdateCheckUtc` 会把自动检查节流 24 小时；手动点「检查更新」不受影响，或者直接删掉 `settings.json` 里这个字段。
-2. `%TEMP%\BetterPinyin\update\<tag>\` 是下载与解压目录，`update.log` 里记着 robocopy 的退出码；测试残留可以直接删。
+2. `%LOCALAPPDATA%\BetterPinyin\updates\<tag>\` 是下载与解压目录，`update.log` 里记着 robocopy 的退出码；测试残留可以直接删（也可以点「关于」页的「清理」）。
 
 替换脚本（`%TEMP%\BetterPinyin\apply-update.cmd`）是纯文本，可以直接用一个假目录跑一遍：参数依次是「解压目录、安装目录、主程序名、要等待的进程号、日志」，进程号随便填一个已经退出的即可——它会立刻跳过等待，做复制、重启、自删。
 

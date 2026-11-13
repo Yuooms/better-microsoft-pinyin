@@ -55,6 +55,20 @@ internal static class AppearanceOptions
         _ => "System",
     };
 
+    /// <summary>解析窗口材质策略。</summary>
+    /// <param name="value">配置值。</param>
+    /// <returns>无法识别时按自动处理。</returns>
+    public static BackdropMode ParseBackdropMode(string? value) =>
+        string.Equals(value?.Trim(), "Solid", StringComparison.OrdinalIgnoreCase)
+            ? BackdropMode.Solid
+            : BackdropMode.Auto;
+
+    /// <summary>把窗口材质策略写回配置值。</summary>
+    /// <param name="mode">策略。</param>
+    /// <returns>配置字符串。</returns>
+    public static string ToSettingValue(BackdropMode mode) =>
+        mode == BackdropMode.Solid ? "Solid" : "Auto";
+
     /// <summary>当前是否应该启用玻璃效果。</summary>
     /// <param name="mode">背景策略。</param>
     /// <returns>是否启用。</returns>

@@ -385,8 +385,12 @@ WPF-UI 接管不了。失败回滚逻辑（还原 `Window.Background`、`Backgro
 
 ## 二十一、自更新：为什么要绕一个批处理
 
-- **进程自己锁着自己**：运行中的 exe 不能被覆盖，所以只能「下载 → 解压到临时目录 →
-  起一个脚本等本进程退出 → 脚本复制 → 脚本重启」。脚本用 `cmd.exe` 而不是 PowerShell：
+- **进程自己锁着自己**：运行中的 exe 不能被覆盖，所以只能「下载 → 解压到缓存目录 →
+  起一个脚本等本进程退出 → 脚本复制 → 脚本重启」。
+- **下载与安装必须分开**：用户要先知道「下到哪、占多大、能不能删」，再决定装不装。
+  所以下载只写 `%LOCALAPPDATA%\BetterPinyin\updates\<tag>`，装不装是下一次点击的事；
+  缓存目录常驻显示在「关于」页，带大小、打开文件夹与清理。放 `%TEMP%` 会被清理工具
+  整片扫走，用户也找不到，所以没用临时目录。脚本用 `cmd.exe` 而不是 PowerShell：
   后者受执行策略影响，绕过策略的启动参数又容易被安全软件盯上。
 - **路径不能写进脚本正文**：`cmd.exe` 按系统 OEM 代码页（简中是 936）读 .bat 文件，
   正文里写 UTF-8 中文路径会变成乱码，而用户的安装目录很可能带中文。
@@ -400,3 +404,26 @@ WPF-UI 接管不了。失败回滚逻辑（还原 `Window.Background`、`Backgro
   下载失败、解压失败都发生在进程还活着的时候，可以正常提示用户，不会把安装目录弄坏。
 - **安装目录不可写就放弃自动替换**：放在 `Program Files` 时 UAC 会让 robocopy 大面积失败，
   与其留一半新一半旧，不如先探一下写权限，直接告诉用户手动解压。
+
+## 二十二、窗口材质：为什么不用自己调 DwmSetWindowAttribute
+
+- **先试过自己设，结论是不行**：设 `DWMWA_SYSTEMBACKDROP_TYPE` 并把
+  `HwndSource.CompositionTarget.BackgroundColor` 改成透明之后，DWM 仍然把窗口表面
+  当作不透明——壁纸一点都透不过来。缺的是 WPF-UI 在 `FluentWindow` 里配套做的几步
+  （`WindowBackdropManager` 会处理窗口样式、框架扩展与背景刷的先后顺序）。
+  所以设置窗口最终改用 WPF-UI 的 `WindowBackdropType`，候选浮窗继续用自研的
+  `Backdrop`（那个窗口是 `AllowsTransparency` 的，走的是另一条路）。
+- **材质和可读性是两件事**：Mica 只是把壁纸去饱和、调亮度，正文直接压上去在深色壁纸
+  上会糊。所以窗口最底层铺一层 60% 的 `WindowGlassBrush` 着色，导航与页面保持透明，
+  透明度靠这一层调。设了背景图时内容区那层 85% 的 `ContentGlassBrush` 要让开，
+  否则图会被洗得几乎看不见。
+- **`NavigationView` 有两层底色**：控件自身的 `Background` 只盖住外层，
+  模板里还有一个独立的 Border 用 `NavigationViewContentBackground`。
+  不覆盖这个键，右侧内容区永远是实色——这是最初「材质开了但看不出来」的真正原因。
+  把它塞进 `RootNavigation.Resources` 就够了，不用改全局资源。
+- **只在 22621+ 用**：更早的 Windows 11 与 Windows 10 走 `ApplyLegacyMicaBackdrop`
+  （未公开的 accent 实现），拖动时逐帧重算整窗模糊，设置窗口会明显拖不动。
+  判断统一用 `Backdrop.SupportsSystemBackdrop`，其余情况老实用纯色。
+- **`WindowBackdropType` 属性回调只在值变化时触发**：窗口在 `SourceInitialized`
+  时还没 Loaded，WPF-UI 会把那一次跳过；值没变又不会再触发。所以在 `Loaded` 里
+  显式调一次 `WindowBackgroundManager.UpdateBackground`，否则「第一次打开没有材质」。

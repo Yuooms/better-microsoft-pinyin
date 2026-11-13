@@ -20,11 +20,13 @@ internal sealed class TrayIcon : IDisposable
 
     /// <summary>创建托盘图标。</summary>
     /// <param name="onOpenSettings">点击"设置"时调用。</param>
+    /// <param name="onOpenAbout">点击更新提示气泡时调用。</param>
     /// <param name="onToggle">点击"启用/停用"时调用，参数为期望的启用状态。</param>
     /// <param name="onExit">点击"退出"时调用。</param>
     /// <param name="initiallyEnabled">初始是否启用。</param>
     public TrayIcon(
         Action onOpenSettings,
+        Action onOpenAbout,
         Action<bool> onToggle,
         Action onExit,
         bool initiallyEnabled)
@@ -51,6 +53,9 @@ internal sealed class TrayIcon : IDisposable
         };
 
         _notifyIcon.DoubleClick += (_, _) => onOpenSettings();
+
+        // 更新提示的气泡点一下直接跳到「关于」页，省得用户自己找。
+        _notifyIcon.BalloonTipClicked += (_, _) => onOpenAbout();
     }
 
     /// <summary>更新"启用"菜单项的勾选状态。</summary>

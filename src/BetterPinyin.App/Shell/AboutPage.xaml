@@ -130,11 +130,17 @@
                                 Orientation="Horizontal"
                                 Margin="0,12,0,0"
                                 Visibility="Collapsed">
-                        <fl:Button x:Name="InstallUpdateButton"
-                                   Content="下载并安装"
+                        <fl:Button x:Name="DownloadUpdateButton"
+                                   Content="下载更新"
                                    Appearance="Primary"
                                    MinWidth="110"
-                                   Click="OnInstallUpdateClick" />
+                                   Click="OnDownloadUpdateClick" />
+                        <fl:Button x:Name="ApplyUpdateButton"
+                                   Content="安装并重启"
+                                   Appearance="Primary"
+                                   MinWidth="110"
+                                   Visibility="Collapsed"
+                                   Click="OnApplyUpdateClick" />
                         <fl:Button Content="打开发布页"
                                    MinWidth="110"
                                    Margin="8,0,0,0"
@@ -148,7 +154,41 @@
                                  Maximum="1"
                                  Visibility="Collapsed" />
 
-                    <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                    <!-- 缓存：路径常驻显示，方便用户自己去看或清掉 -->
+                    <Grid Margin="0,14,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel>
+                            <TextBlock x:Name="UpdateCacheSizeText"
+                                       Style="{StaticResource Hint}"
+                                       FontSize="13"
+                                       Text="更新缓存：0 B" />
+                            <TextBlock x:Name="UpdateCachePathText"
+                                       Style="{StaticResource Hint}"
+                                       FontSize="12"
+                                       Margin="0,2,0,0"
+                                       TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextTertiaryBrush}" />
+                        </StackPanel>
+
+                        <StackPanel Grid.Column="1"
+                                    Orientation="Horizontal"
+                                    VerticalAlignment="Top">
+                            <fl:Button Content="打开文件夹"
+                                       MinWidth="96"
+                                       Click="OnOpenCacheFolderClick" />
+                            <fl:Button x:Name="ClearCacheButton"
+                                       Content="清理"
+                                       MinWidth="72"
+                                       Margin="8,0,0,0"
+                                       Click="OnClearCacheClick" />
+                        </StackPanel>
+                    </Grid>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
                         <fl:ToggleSwitch x:Name="UpdateAutoCheckSwitch"
                                          Checked="OnAutoCheckChanged"
                                          Unchecked="OnAutoCheckChanged" />
@@ -156,7 +196,7 @@
                                    FontSize="13"
                                    VerticalAlignment="Center"
                                    Margin="10,0,0,0"
-                                   Text="启动时自动检查更新（每天最多一次）" />
+                                   Text="启动时检查更新（每天最多一次，只提示，不自动下载）" />
                     </StackPanel>
                 </StackPanel>
             </Border>

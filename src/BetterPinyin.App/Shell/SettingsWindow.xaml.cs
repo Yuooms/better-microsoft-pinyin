@@ -70,6 +70,13 @@ public partial class SettingsWindow : FluentWindow, INavigationWindow
         AddPage("关于", "\uE946", typeof(AboutPage), () => new AboutPage(), footer: true);
 
         Loaded += OnLoaded;
+        SourceInitialized += (_, _) => RefreshWindowMaterial();
+
+        // 切主题时材质本身也要换色（Mica 的染色由 DWM 按深浅色算），
+        // 而且 WPF-UI 会在 ApplicationThemeManager.Apply 里把窗口背景刷回实色，
+        // 必须在那之后再接管一次。订阅顺序保证 App 的处理器先跑完。
+        ThemeManager.ThemeChanged += OnThemeChanged;
+        Closed += (_, _) => ThemeManager.ThemeChanged -= OnThemeChanged;
 
         // 键盘钩子是全局的：在设置页里打字会进入组字缓冲，切走之后会带着残留去查询。
         // 进入/离开设置窗口都收口一次，窗口边界就闭合了。
@@ -86,6 +93,9 @@ public partial class SettingsWindow : FluentWindow, INavigationWindow
     /// </remarks>
     public void RefreshBackground()
     {
+        // 背景图的开关会影响内容区那层底色是不是要让开，先同步一次材质。
+        RefreshWindowMaterial();
+
         var settings = AppServices.Settings;
 
         if (!settings.BackgroundImageEnabled || string.IsNullOrWhiteSpace(settings.BackgroundImagePath))
@@ -181,11 +191,88 @@ public partial class SettingsWindow : FluentWindow, INavigationWindow
     {
         _navigationReady = true;
 
+        // WPF-UI 在模板应用 / 主题刷新时会把窗口背景刷回 ApplicationBackgroundBrush，
+        // 覆盖掉 SourceInitialized 里设的透明与材质，所以第一次布局完成后再接管一次。
+        RefreshWindowMaterial();
+
         var target = _pendingPageType ?? _pageTypes.Values.FirstOrDefault();
         if (target is not null)
         {
             _navigation.Navigate(target);
         }
+    }
+
+    private void OnThemeChanged(object? sender, EventArgs e) => RefreshWindowMaterial();
+
+    /// <summary>
+    /// 按设置应用窗口材质。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 材质走 WPF-UI 自己的 <c>WindowBackdropType</c>：它会同时把窗口背景刷成透明、
+    /// 设好 DWM 属性，并在切主题后自己重刷一遍。自己用 DwmSetWindowAttribute 试过一版，
+    /// 窗口表面仍然被当作不透明（壁纸透不过来）——缺的是 WPF-UI 在 FluentWindow 模板里
+    /// 配套做的那几步，所以这里不再重复实现。
+    /// </para>
+    /// <para>
+    /// 透明不等于可读：Mica 只是把壁纸去饱和、调亮度，深色壁纸配深色文字会糊成一片。
+    /// 所以在窗口最底层铺一层 60% 的 <c>WindowGlassBrush</c> 着色，正文压在上面对比度才稳定；
+    /// 背景图在这层之上，不会被它盖住。
+    /// </para>
+    /// </remarks>
+    public void RefreshWindowMaterial()
+    {
+        var mode = AppearanceOptions.ParseBackdropMode(AppServices.Settings.BackdropMode);
+
+        // 只认 DWMSBT（22621+）：更早的 Windows 11 与 Windows 10 走的是未公开的 accent 实现，
+        // 拖动时逐帧重算整窗模糊，放在设置窗口上会卡得很难受，宁可继续用纯色。
+        var useMaterial = mode != BackdropMode.Solid && Backdrop.SupportsSystemBackdrop;
+
+        var settings = AppServices.Settings;
+        var hasBackgroundImage = settings.BackgroundImageEnabled &&
+            !string.IsNullOrWhiteSpace(settings.BackgroundImagePath);
+
+        WindowBackdropType = useMaterial ? WindowBackdropType.Mica : WindowBackdropType.None;
+
+        // 属性回调只在值变化时触发，而窗口在 SourceInitialized 时还没 Loaded，
+        // 那一次会被 WPF-UI 跳过；值没变又不会再触发，所以这里显式刷一次。
+        if (IsLoaded)
+        {
+            Wpf.Ui.Appearance.WindowBackgroundManager.UpdateBackground(
+                this,
+                Wpf.Ui.Appearance.ApplicationThemeManager.GetAppTheme(),
+                WindowBackdropType);
+        }
+
+        MaterialTint.Visibility = useMaterial ? Visibility.Visible : Visibility.Collapsed;
+
+        // 显式写一遍底色：WindowBackdropType 没变化时属性回调不会触发，
+        // 只靠 WPF-UI 的话从「纯色」切回「材质」可能留下上一次的实色底。
+        Background = useMaterial
+            ? Brushes.Transparent
+            : (Brush)FindResource("WindowBackgroundBrush");
+
+        // 导航与页面必须透明，否则会把窗口底下的材质和背景图盖住。
+        // NavigationView 的模板里另有一层 NavigationViewContentBackground（内容区底色），
+        // 光设控件自身的 Background 盖不掉它——那是模板里独立的一个 Border。
+        RootNavigation.Background = Brushes.Transparent;
+        // 设了背景图时内容区完全让开，否则 85% 的白底会把图洗得几乎看不见；
+        // 这时可读性由用户自己调「透明度」控制（越低文字越清楚）。
+        if (hasBackgroundImage)
+        {
+            RootNavigation.Resources["NavigationViewContentBackground"] = Brushes.Transparent;
+        }
+        else if (useMaterial)
+        {
+            // 内容区比导航更实一点：导航只有短标签，正文是长段落，对比度要求不一样。
+            RootNavigation.Resources["NavigationViewContentBackground"] = FindResource("ContentGlassBrush");
+        }
+        else
+        {
+            RootNavigation.Resources.Remove("NavigationViewContentBackground");
+        }
+
+        Log.Write($"窗口材质：{(useMaterial ? "Mica" : "纯色")}，系统 {Environment.OSVersion.Version.Build}");
     }
 
     private void AddPage(string title, string glyph, Type pageType, Func<object> factory, bool footer)

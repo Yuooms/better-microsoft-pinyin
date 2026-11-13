@@ -30,7 +30,7 @@ internal static class ThemeManager
         "AccentBrush", "AccentHoverBrush", "AccentPressedBrush", "AccentSoftBrush",
         "ControlFillBrush", "ControlStrokeBrush", "ControlStrokeBottomBrush", "ControlFillDisabledBrush",
         "FlyoutBackgroundBrush", "FlyoutStrokeBrush",
-        "ShellGlassBrush", "ContentGlassBrush",
+        "WindowGlassBrush", "ShellGlassBrush", "ContentGlassBrush",
         "SuccessBrush", "WarningBrush", "ErrorBrush",
         "PopupBackgroundBrush", "PopupStrokeBrush", "PopupKeyChipBrush",
         "AcrylicTint",
