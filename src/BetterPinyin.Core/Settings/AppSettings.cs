@@ -15,6 +15,21 @@ public sealed class AppSettings
     /// <summary>云联想总开关。</summary>
     public bool CloudAssistEnabled { get; set; } = true;
 
+    /// <summary>
+    /// 是否在本机记录输入统计。
+    /// </summary>
+    /// <remarks>
+    /// 默认关闭：这是唯一会持续写本地文件的开关，属于用户应当明确同意的行为。
+    /// 关闭只是停止累计，已有历史仍然保留，用户可以自行查看或清空。
+    /// </remarks>
+    public bool StatisticsEnabled { get; set; }
+
+    /// <summary>是否按程序分别统计。关闭后只累计总数，不记录进程名。</summary>
+    public bool StatisticsPerAppEnabled { get; set; } = true;
+
+    /// <summary>统计保留天数；0 表示永久保留。</summary>
+    public int StatisticsRetentionDays { get; set; } = 365;
+
     /// <summary>是否启用「云联想」（严格按音节数匹配）。</summary>
     public bool StrictEnabled { get; set; } = true;
 

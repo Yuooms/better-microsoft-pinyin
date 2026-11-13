@@ -9,6 +9,7 @@ using System.Windows.Threading;
 using BetterPinyin.Interop.Input;
 using BetterPinyin.Interop.Windowing;
 using BetterPinyin.App.Features.CloudAssist;
+using BetterPinyin.App.Features.Statistics;
 using BetterPinyin.App.Shell;
 using BetterPinyin.Core.Features;
 
@@ -28,6 +29,7 @@ public partial class App : Application
     private Mutex? _singleInstanceMutex;
     private TrayIcon? _trayIcon;
     private CloudAssistFeature? _cloudAssist;
+    private StatisticsFeature? _statistics;
     private KeyboardHub? _keyboardHub;
     private FeatureRegistry? _registry;
     private SettingsWindow? _settingsWindow;
@@ -91,6 +93,12 @@ public partial class App : Application
             _cloudAssist = new CloudAssistFeature(AppServices.Settings, _keyboardHub);
             _registry.Register(_cloudAssist);
 
+            _statistics = new StatisticsFeature(
+                AppServices.Settings,
+                _keyboardHub,
+                _cloudAssist.Controller);
+            _registry.Register(_statistics);
+
             _trayIcon = new TrayIcon(
                 onOpenSettings: ShowSettings,
                 onToggle: OnToggleEnabled,
@@ -148,6 +156,7 @@ public partial class App : Application
         {
             _registry?.StopAllAsync().GetAwaiter().GetResult();
             _cloudAssist?.Dispose();
+            _statistics?.Dispose();
             _keyboardHub?.Dispose();
             _trayIcon?.Dispose();
             AppServices.SaveSettings();

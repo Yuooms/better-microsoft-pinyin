@@ -162,14 +162,19 @@ public sealed class StatisticsAggregator
             var hour = _clock().Hour;
 
             _composing = true;
-            _currentApp = string.IsNullOrWhiteSpace(process) ? UnknownProcess : process;
+
+            // 传空表示「不记录程序维度」（用户关掉了按程序统计）。
+            // 不传空但取不到名字时，调用方会显式传 UnknownProcess。
+            _currentApp = string.IsNullOrWhiteSpace(process) ? null : process;
             _lastLength = 0;
 
             day.Totals.Compositions++;
             day.AddHour(hour, 1, 0);
 
-            var app = FindAppLocked(day, _currentApp);
-            app.Compositions++;
+            if (_currentApp is not null)
+            {
+                FindAppLocked(day, _currentApp).Compositions++;
+            }
         }
     }
 
