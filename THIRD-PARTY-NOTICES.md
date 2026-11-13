@@ -41,6 +41,16 @@ Fluent 控件、导航与标题栏。它们以二进制形式随程序分发。
 - 用途：词表与词频
 - 许可：MIT License，Copyright (c) 2013 Sun Junyi
 
+## 界面思路参考（未引入代码）
+
+- 项目：BetterGI，https://github.com/babalae/better-genshin-impact
+- 许可：GPL-3.0
+- 说明：本项目设置窗口的信息架构（FluentWindow + TitleBar + NavigationView +
+  CardControl / CardExpander 的分组方式）与窗口材质（Mica / 亚克力的降级策略）
+  参考了 BetterGI 的公开界面。
+  **仅参考交互与布局思路，未复制其源代码、XAML、样式或资源。**
+  本项目不包含 GPL-3.0 衍生代码，因此仍按 MIT 分发。
+
 ---
 
 MIT License 全文：
