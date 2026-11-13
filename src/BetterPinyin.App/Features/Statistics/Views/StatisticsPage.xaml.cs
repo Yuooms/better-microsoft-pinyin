@@ -96,6 +96,9 @@ public partial class StatisticsPage : Page
             RangeCombo.SelectedIndex = 1;
             MetricCombo.SelectedIndex = 0;
 
+            // 总开关关着时，子选项没有意义，置灰避免让人以为还在记录。
+            PerAppToggle.IsEnabled = Settings.StatisticsEnabled;
+
             RetentionCombo.SelectedIndex = Settings.StatisticsRetentionDays switch
             {
                 30 => 0,
@@ -121,6 +124,7 @@ public partial class StatisticsPage : Page
         Settings.StatisticsPerAppEnabled = PerAppToggle.IsChecked == true;
         AppServices.SaveSettings();
 
+        PerAppToggle.IsEnabled = Settings.StatisticsEnabled;
         _feature.SetEnabled(Settings.StatisticsEnabled);
         Refresh();
     }
@@ -200,6 +204,22 @@ public partial class StatisticsPage : Page
         FillChart(days, points);
         FillApps(days, points);
         FillDataInfo(days);
+        ShowStartupWarning();
+    }
+
+    /// <summary>钩子没装上时把原因说出来，否则用户只能看到一个沉默的 0。</summary>
+    private void ShowStartupWarning()
+    {
+        // 用户主动关掉统计时不该再提示「没在运行」，那是预期状态。
+        var error = Settings.StatisticsEnabled ? _feature.LastError : null;
+        if (error is null)
+        {
+            WarningText.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        WarningText.Text = $"统计没有在运行：{error}。数字不会增长，可能是安全软件拦截了键盘钩子。";
+        WarningText.Visibility = Visibility.Visible;
     }
 
     private void FillToday(IReadOnlyList<DailyStatistics> days)

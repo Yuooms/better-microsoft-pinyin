@@ -214,6 +214,34 @@ internal static class CoreTests
         Check.False(json.Contains("若娜瓦"), "统计文件里不应出现输入内容");
         Check.True(json.Contains("CloudCharacters"), "文件里应只有计数字段");
 
+        // 防抖落盘也必须按保留期裁剪：用户从不打开设置页时，
+        // 如果只有手动保存才裁剪，文件会一年年长下去。
+        var retentionPath = Path.Combine(Path.GetTempPath(), "bp-stats-" + Guid.NewGuid().ToString("N") + ".json");
+        using (var retentionStore = new StatisticsStore(retentionPath))
+        {
+            var manyDays = Enumerable.Range(0, 40)
+                .Select(i => new DailyStatistics
+                {
+                    Date = new DateTime(2026, 1, 1).AddDays(i).ToString("yyyy-MM-dd"),
+                    Totals = new StatisticsTotals { Compositions = 1 },
+                })
+                .ToList();
+
+            retentionStore.ScheduleSave(manyDays, retentionDays: 30);
+            Check.True(retentionStore.Flush(), "防抖刷盘");
+            Check.Equal(30, retentionStore.Load().Count, "防抖落盘也应裁剪到保留期");
+
+            // 之后不带保留期参数保存时，沿用上一次记下的值，
+            // 而不是退回 0（= 永不裁剪）。
+            Check.True(retentionStore.Save(manyDays), "沿用保留期保存");
+            Check.Equal(30, retentionStore.Load().Count, "沿用上次保留期");
+        }
+
+        if (File.Exists(retentionPath))
+        {
+            File.Delete(retentionPath);
+        }
+
         // 清空：删文件且不留备份
         Check.True(store.DeleteAll(), "清空统计");
         Check.False(File.Exists(path), "清空后文件应消失");

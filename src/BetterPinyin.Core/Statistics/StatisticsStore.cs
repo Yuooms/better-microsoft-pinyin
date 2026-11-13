@@ -32,6 +32,7 @@ public sealed class StatisticsStore : IDisposable
     private readonly object _gate = new();
     private readonly Timer _timer;
     private IReadOnlyList<DailyStatistics>? _pending;
+    private int _retentionDays;
     private bool _disposed;
 
     /// <summary>用默认路径创建。</summary>
@@ -97,7 +98,12 @@ public sealed class StatisticsStore : IDisposable
 
     /// <summary>请求在防抖窗口之后落盘。</summary>
     /// <param name="days">要保存的快照。</param>
-    public void ScheduleSave(IReadOnlyList<DailyStatistics> days)
+    /// <param name="retentionDays">保留天数；0 表示全部保留。</param>
+    /// <remarks>
+    /// 保留期必须在这里一起记下来：防抖落盘时拿不到调用方的设置，
+    /// 不记就会变成「只有手动点保存才裁剪」，用户不开设置页时数据会一直长。
+    /// </remarks>
+    public void ScheduleSave(IReadOnlyList<DailyStatistics> days, int retentionDays = 0)
     {
         if (_disposed)
         {
@@ -107,6 +113,7 @@ public sealed class StatisticsStore : IDisposable
         lock (_gate)
         {
             _pending = days;
+            _retentionDays = retentionDays;
         }
 
         try
@@ -123,12 +130,12 @@ public sealed class StatisticsStore : IDisposable
     /// 立刻落盘。
     /// </summary>
     /// <param name="days">要保存的快照。</param>
-    /// <param name="retentionDays">保留天数；0 表示全部保留。</param>
+    /// <param name="retentionDays">保留天数；0 表示全部保留；-1 表示沿用上次的保留期。</param>
     /// <param name="timeoutMilliseconds">等待写锁的超时。</param>
     /// <returns>成功返回 true。</returns>
     public bool Save(
         IReadOnlyList<DailyStatistics> days,
-        int retentionDays = 0,
+        int retentionDays = -1,
         int timeoutMilliseconds = 2000)
     {
         if (!Monitor.TryEnter(_gate, timeoutMilliseconds))
@@ -139,11 +146,15 @@ public sealed class StatisticsStore : IDisposable
 
         try
         {
+            var effectiveRetention = retentionDays < 0 ? _retentionDays : retentionDays;
             var payload = new StatisticsFile
             {
                 Version = 1,
-                Days = TrimByRetention(days, retentionDays).ToList(),
+                Days = TrimByRetention(days, effectiveRetention).ToList(),
             };
+
+            // 记住保留期，后续的防抖落盘与退出刷盘都按它来。
+            _retentionDays = effectiveRetention;
 
             var json = JsonSerializer.Serialize(payload, JsonOptions);
             var directory = Path.GetDirectoryName(FilePath);
@@ -171,11 +182,11 @@ public sealed class StatisticsStore : IDisposable
     }
 
     /// <summary>把待写的快照立刻刷盘。</summary>
-    /// <param name="retentionDays">保留天数；0 表示全部保留。</param>
+    /// <param name="retentionDays">保留天数；0 表示全部保留；-1 表示沿用上次的保留期。</param>
     /// <param name="timeoutMilliseconds">等待写锁的超时。</param>
     /// <returns>成功返回 true。</returns>
     /// <remarks>退出路径必须调用：否则最后 1.5 秒里累计的数字会丢。</remarks>
-    public bool Flush(int retentionDays = 0, int timeoutMilliseconds = 500)
+    public bool Flush(int retentionDays = -1, int timeoutMilliseconds = 500)
     {
         IReadOnlyList<DailyStatistics>? pending;
         lock (_gate)
@@ -282,6 +293,7 @@ public sealed class StatisticsStore : IDisposable
 
         if (pending is not null)
         {
+            // 用 ScheduleSave 时记下的保留期，而不是 0（= 永不裁剪）。
             Save(pending);
         }
     }

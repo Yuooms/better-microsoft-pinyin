@@ -28,6 +28,7 @@ internal sealed class StatisticsFeature : IFeatureModule, IDisposable
     private readonly StatisticsAggregator _aggregator;
 
     private StatisticsCollector? _collector;
+    private string? _startError;
     private bool _started;
     private bool _disposed;
 
@@ -84,8 +85,18 @@ internal sealed class StatisticsFeature : IFeatureModule, IDisposable
         }
 
         _started = true;
+        _startError = null;
         _collector = new StatisticsCollector(_aggregator, _settings, _hub, _controller, ScheduleSave);
-        _collector.Start();
+        if (!_collector.Start())
+        {
+            // 安装失败时不能假装在统计：钩子装不上就一个数字都不会有，
+            // 必须留下痕迹，否则用户只会看到「一直是 0」。
+            _startError = _collector.LastError;
+            Log.Write($"[统计] 启动失败：{_startError}");
+            _collector.Dispose();
+            _collector = null;
+            _started = false;
+        }
 
         return Task.CompletedTask;
     }
@@ -138,6 +149,9 @@ internal sealed class StatisticsFeature : IFeatureModule, IDisposable
         return _store.Save(_aggregator.Snapshot(), _settings.StatisticsRetentionDays);
     }
 
+    /// <summary>启动失败的原因；成功时为 null。</summary>
+    public string? LastError => _startError;
+
     /// <summary>清空全部历史。</summary>
     /// <returns>成功返回 true。</returns>
     public bool ClearAll()
@@ -163,6 +177,6 @@ internal sealed class StatisticsFeature : IFeatureModule, IDisposable
 
     private void ScheduleSave()
     {
-        _store.ScheduleSave(_aggregator.Snapshot());
+        _store.ScheduleSave(_aggregator.Snapshot(), _settings.StatisticsRetentionDays);
     }
 }

@@ -24,6 +24,9 @@ namespace BetterPinyin.App.Features.Statistics;
 /// </remarks>
 internal sealed class StatisticsCollector : IDisposable
 {
+    /// <summary>在键盘中枢里的持有者标识。</summary>
+    private const string HubOwner = "input-stats";
+
     private const string OwnProcessName = "BetterMicrosoftPinyin";
 
     /// <summary>UWP 应用的宿主进程名；这些窗口的真实应用无法从进程名还原。</summary>
@@ -37,6 +40,9 @@ internal sealed class StatisticsCollector : IDisposable
 
     private int _lastLength;
     private bool _started;
+
+    /// <summary>最近一次启动失败的原因。</summary>
+    public string? LastError { get; private set; }
 
     /// <summary>创建收集器。</summary>
     /// <param name="aggregator">累加器。</param>
@@ -59,14 +65,27 @@ internal sealed class StatisticsCollector : IDisposable
     }
 
     /// <summary>开始收集。</summary>
-    public void Start()
+    /// <returns>钩子可用返回 true；失败时不订阅任何事件。</returns>
+    /// <remarks>
+    /// 统计必须自己持有钩子，不能搭云联想的便车：用户完全可能关掉云联想、
+    /// 只留统计，那时候没有人 <c>Acquire</c>，钩子不会装，数字会永远是 0。
+    /// 中枢按引用计数，两个模块都在时也只会装一次。
+    /// </remarks>
+    public bool Start()
     {
         if (_started)
         {
-            return;
+            return true;
+        }
+
+        if (!_hub.Acquire(HubOwner, out var error))
+        {
+            LastError = error ?? "键盘钩子安装失败";
+            return false;
         }
 
         _started = true;
+        LastError = null;
         _hub.Observed += OnObserved;
         _hub.Tracker.CompositionChanged += OnCompositionChanged;
         _hub.Tracker.CompositionEnded += OnCompositionEnded;
@@ -75,6 +94,8 @@ internal sealed class StatisticsCollector : IDisposable
         {
             _controller.SuggestionAccepted += OnSuggestionAccepted;
         }
+
+        return true;
     }
 
     /// <inheritdoc />
@@ -94,6 +115,8 @@ internal sealed class StatisticsCollector : IDisposable
         {
             _controller.SuggestionAccepted -= OnSuggestionAccepted;
         }
+
+        _hub.Release(HubOwner);
     }
 
     private void OnObserved(object? sender, KeyboardHookEventArgs e)
