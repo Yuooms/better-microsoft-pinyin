@@ -253,7 +253,7 @@ public partial class CloudAssistPage : Page
     /// </remarks>
     private void UpdateKeyModeState()
     {
-        if (ExtendedKeysList is null || ExtendedCountComboBox is null)
+        if (ExtendedKeysList is null || ExtendedCountComboBox is null || ExtendedCountRow is null)
         {
             return;
         }
@@ -277,6 +277,12 @@ public partial class CloudAssistPage : Page
         }
 
         ExtendedCountComboBox.IsEnabled = !manual;
+        SettingRow.SetDescription(
+            ExtendedCountRow,
+            manual
+                ? "手动指定时这一项跟着采纳键的个数走：有几个键就能显示几条。"
+                : "自动模式下最多显示几条扩展候选，采纳键由本地候选数接着往后排。");
+
         if (manual)
         {
             // 空列表也至少留 1 条：下拉框没有 0 这一项，扩展这时候本来就一条都不显示。

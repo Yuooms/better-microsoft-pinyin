@@ -44,6 +44,7 @@ internal static class Program
     private const uint MouseEventMove = 0x0001;
     private const uint MouseEventLeftDown = 0x0002;
     private const uint MouseEventLeftUp = 0x0004;
+    private const uint MouseEventWheel = 0x0800;
 
     [StructLayout(LayoutKind.Sequential)]
     private struct MouseInput
@@ -81,6 +82,21 @@ internal static class Program
 
     private static void SendMouse(uint flags) =>
         SendInput(1, new[] { new MouseInputUnion { Type = InputMouse, Mouse = new MouseInput { Flags = flags } } }, Marshal.SizeOf<MouseInputUnion>());
+
+    /// <summary>滚轮：<paramref name="delta"/> 一格是 120，正数向上。</summary>
+    /// <remarks>WHEEL_DELTA 固定 120；按 WPF 的 ScrollViewer 实测，一格滚 3 行左右。</remarks>
+    private static void SendWheel(int delta) =>
+        SendInput(
+            1,
+            new[]
+            {
+                new MouseInputUnion
+                {
+                    Type = InputMouse,
+                    Mouse = new MouseInput { MouseData = (uint)delta, Flags = MouseEventWheel },
+                },
+            },
+            Marshal.SizeOf<MouseInputUnion>());
 
     /// <summary>解析逗号分隔的整数，数量必须是 count。</summary>
     private static bool TryParseNumbers(string text, int count, out int[] values)
@@ -143,6 +159,37 @@ internal static class Program
             Thread.Sleep(40);
             SendMouse(MouseEventLeftUp);
             Console.WriteLine($"[鼠标] 已点击 ({clickPoint[0]},{clickPoint[1]})");
+            return 0;
+        }
+
+        var wheelArg = args.FirstOrDefault(a =>
+            a.StartsWith("--wheel=", StringComparison.OrdinalIgnoreCase));
+        if (wheelArg is not null)
+        {
+            // 小屏或高 DPI 下设置页一屏放不下，界面核对要先滚到目标区域。
+            // 滚动位置取决于指针所在的可滚动区域，所以必须给坐标。
+            var wheelParts = wheelArg["--wheel=".Length..].Split(',');
+            if (wheelParts.Length < 3 ||
+                !int.TryParse(wheelParts[0], out var wheelX) ||
+                !int.TryParse(wheelParts[1], out var wheelY) ||
+                !int.TryParse(wheelParts[2], out var wheelDelta))
+            {
+                Console.WriteLine("[鼠标] ✗ 格式应为 --wheel=横,纵,滚动量[,次数]（一格 120，正数向上）");
+                return 1;
+            }
+
+            var times = wheelParts.Length > 3 && int.TryParse(wheelParts[3], out var parsedTimes)
+                ? Math.Clamp(parsedTimes, 1, 50)
+                : 1;
+
+            ShowWindowAt(wheelX, wheelY);
+            for (var i = 0; i < times; i++)
+            {
+                SendWheel(wheelDelta);
+                Thread.Sleep(60);
+            }
+
+            Console.WriteLine($"[鼠标] 已滚动 ({wheelX},{wheelY}) 共 {times} 次，每次 {wheelDelta}");
             return 0;
         }
 

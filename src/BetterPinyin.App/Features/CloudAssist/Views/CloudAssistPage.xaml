@@ -90,9 +90,11 @@
                                              AutomationProperties.Name="启用扩展云联想" />
                         </HeaderedContentControl>
 
-                        <HeaderedContentControl Style="{StaticResource SettingRow}"
+                        <!-- 说明文字随模式改：自动模式是上限，手动模式是键数（见 UpdateKeyModeState） -->
+                        <HeaderedContentControl x:Name="ExtendedCountRow"
+                                                Style="{StaticResource SettingRow}"
                                                 Header="显示条数"
-                                                ui:SettingRow.Description="手动指定时这一项跟着采纳键的个数走：有几个键就能显示几条。">
+                                                ui:SettingRow.Description="自动模式下最多显示几条扩展候选。">
                             <ComboBox x:Name="ExtendedCountComboBox" Width="100">
                                 <ComboBoxItem Content="1 条" Tag="1" />
                                 <ComboBoxItem Content="2 条" Tag="2" />

@@ -82,6 +82,9 @@ dotnet run --project tools/ImeProbe -- --nudge-mouse
 # 坐标是屏幕坐标；--focus 会先把目标窗口切到前台再动手
 dotnet run --project tools/ImeProbe -- --focus=BetterMicrosoftPinyin --click=900,322
 dotnet run --project tools/ImeProbe -- --focus=BetterMicrosoftPinyin --drag=940,626,940,698
+
+# 滚轮：一格 120，正数向上；小屏/高 DPI 下设置页一屏放不下时先滚到目标区域再截图
+dotnet run --project tools/ImeProbe -- --focus=BetterMicrosoftPinyin --wheel=600,500,-360,2
 ```
 
 坐标会受缩放与窗口位置影响。更可靠的做法是先用 UIA 拿控件的物理坐标：
