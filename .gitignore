@@ -44,3 +44,8 @@ Desktop.ini
 $RECYCLE.BIN/
 *.tmp
 *.log
+
+# tools/Release 是发布打包脚本，不是构建产物。上面的 [Rr]elease/ 会误伤，
+# 这里显式放行；先放行目录，再放行目录里的文件。
+!tools/Release/
+!tools/Release/**

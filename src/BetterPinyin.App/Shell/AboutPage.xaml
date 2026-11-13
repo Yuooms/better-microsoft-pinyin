@@ -72,11 +72,11 @@
                                        ToolTip="在浏览器中打开 GitHub 主页">Yuooms</Hyperlink>
                         </TextBlock>
                         <TextBlock Style="{StaticResource Hint}" FontSize="13" LineHeight="22" Margin="0,6,0,0">
-                            <Run Text="主页：" />
-                            <Hyperlink NavigateUri="https://github.com/Yuooms"
+                            <Run Text="项目地址：" />
+                            <Hyperlink NavigateUri="https://github.com/Yuooms/better-microsoft-pinyin"
                                        RequestNavigate="OnLinkClick"
                                        Foreground="{DynamicResource AccentBrush}"
-                                       ToolTip="在浏览器中打开 GitHub 主页">https://github.com/Yuooms</Hyperlink>
+                                       ToolTip="在浏览器中打开项目主页">https://github.com/Yuooms/better-microsoft-pinyin</Hyperlink>
                         </TextBlock>
                         <TextBlock Style="{StaticResource Hint}" FontSize="13" LineHeight="22" Margin="0,6,0,0">
                             <Run Text="开源协议：" />
