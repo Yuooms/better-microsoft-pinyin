@@ -684,7 +684,11 @@ internal sealed class CloudAssistController : IDisposable
 
     private void CommitSucceeded(in ActivationTarget target, string query)
     {
-        if (!_settings.WordbookLearnOnAccept)
+        // 扩展候选默认只上屏、不记账：整句写进短语库会长期占住原生候选第一位。
+        // 这里连词库一起跳过，否则词条会停在「待同步」，下次启动被补写，开关就失效了。
+        if (!WordbookCommitPolicy.ShouldRecord(
+                isExtended: target.Slot == SuggestionSlot.Extended,
+                _settings))
         {
             return;
         }

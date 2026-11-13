@@ -86,6 +86,16 @@ public sealed class AppSettings
     public bool PhraseAutoWrite { get; set; } = true;
 
     /// <summary>
+    /// 扩展云联想的词采纳后是否也写进自定义短语。
+    /// </summary>
+    /// <remarks>
+    /// 默认关闭。扩展候选多是「伊斯塔路是谁」这类整句，写进短语库会长期占住原生候选的第一位，
+    /// 而这类词往往只用一次；严格云联想（单个词）不受影响，仍然照常写入。
+    /// 关闭时连用户词库也不记：只学不写会留下「待同步」，下次启动会被补写，开关就形同虚设。
+    /// </remarks>
+    public bool PhraseWriteExtended { get; set; }
+
+    /// <summary>
     /// 写入自定义短语时是否同时补一条简拼记录，使得打首字母也能出词。
     /// </summary>
     /// <remarks>

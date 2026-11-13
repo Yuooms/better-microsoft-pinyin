@@ -31,7 +31,7 @@ public partial class WordbookPage : Page
     private const int LearningDisplayLimit = 5000;
 
     private const string PhraseSubtitle =
-        "这里直接管理微软拼音的「用户定义的短语」。采纳过的云词会自动写进来，写入后几秒生效，打拼音就能在原生候选里看到。";
+        "这里直接管理微软拼音的「用户定义的短语」。采纳的云词会自动写进来（扩展云联想默认只上屏、不写入，可在上方打开），写入后几秒生效，打拼音就能在原生候选里看到。";
 
     private const string LearningSubtitle =
         "输入法在你反复打某个词之后会自己记下来，存在本机，用于调整原生候选的顺序。勾选不再需要的词可以直接删掉，删完输入法会重新加载。";
@@ -97,13 +97,17 @@ public partial class WordbookPage : Page
 
         _initialized = true;
 
-        // 赋值会触发 Checked/Unchecked；这里必须挡住，否则三个开关会互相把对方的
+        // 赋值会触发 Checked/Unchecked；这里必须挡住，否则几个开关会互相把对方的
         // 默认值写回配置（新加的键第一次打开时就被改成 false）。
         _loading = true;
         AutoWriteToggle.IsChecked = AppServices.Settings.PhraseAutoWrite;
         LocalFirstToggle.IsChecked = AppServices.Settings.WordbookLocalFirst;
         InitialsToggle.IsChecked = AppServices.Settings.PhraseWriteInitials;
+        ExtendedWriteToggle.IsChecked = AppServices.Settings.PhraseWriteExtended;
         _loading = false;
+
+        // 总开关关着时，扩展词本来就不会写，单独那个开关跟着置灰，免得用户以为改了没生效。
+        ExtendedWriteToggle.IsEnabled = AutoWriteToggle.IsChecked == true;
 
         Reload();
     }
@@ -337,6 +341,10 @@ public partial class WordbookPage : Page
 
         AppServices.Settings.PhraseAutoWrite = AutoWriteToggle.IsChecked == true;
         AppServices.Settings.WordbookLocalFirst = LocalFirstToggle.IsChecked == true;
+        AppServices.Settings.PhraseWriteExtended = ExtendedWriteToggle.IsChecked == true;
+
+        // 总开关关掉时，扩展词那个开关没有意义，跟着置灰。
+        ExtendedWriteToggle.IsEnabled = AppServices.Settings.PhraseAutoWrite;
 
         var initialsWas = AppServices.Settings.PhraseWriteInitials;
         AppServices.Settings.PhraseWriteInitials = InitialsToggle.IsChecked == true;
