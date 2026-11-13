@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text;
 using BetterPinyin.Contracts;
+using BetterPinyin.Core.Wordbook;
 using BetterPinyin.Interop.Ime;
 using BetterPinyin.Interop.Input;
 using BetterPinyin.Interop.Uia;
@@ -50,6 +51,15 @@ internal static class Program
             a.StartsWith("--hotkey=", StringComparison.OrdinalIgnoreCase));
         if (hotkeyArg is not null)
         {
+            // 按键总是发给前台窗口，所以先把目标切上来；切不过去就一个键都不发。
+            var focusArg = args.FirstOrDefault(a =>
+                a.StartsWith("--focus=", StringComparison.OrdinalIgnoreCase));
+            if (focusArg is not null && TargetWindow.Activate(focusArg["--focus=".Length..]) == IntPtr.Zero)
+            {
+                return 5;
+            }
+
+            Thread.Sleep(300);
             return SendHotkey(hotkeyArg["--hotkey=".Length..]);
         }
 
@@ -145,6 +155,22 @@ internal static class Program
             return ok ? 0 : 2;
         }
 
+        if (args.Any(a => a.Equals("--ime", StringComparison.OrdinalIgnoreCase)) ||
+            args.Any(a => a.StartsWith("--ime=", StringComparison.OrdinalIgnoreCase)))
+        {
+            return HandleImeCommands(args, _uiaWorker);
+        }
+
+        if (args.Any(a => a.Equals("--wordbook", StringComparison.OrdinalIgnoreCase)))
+        {
+            return DumpWordbooks(_uiaWorker);
+        }
+
+        if (args.Any(a => a.StartsWith("--layout", StringComparison.OrdinalIgnoreCase)))
+        {
+            return HandleLayoutCommands(args, _uiaWorker);
+        }
+
         if (args.Any(a => a.Equals("--self-test", StringComparison.OrdinalIgnoreCase)) ||
             args.Any(a => a.Equals("--hit-test", StringComparison.OrdinalIgnoreCase)))
         {
@@ -172,9 +198,14 @@ internal static class Program
 
             var english = args.Any(a => a.Equals("--english", StringComparison.OrdinalIgnoreCase));
 
+            // 用已存在的窗口做测试（Windows 11 的记事本是 UWP，启动进程拿不到窗口）。
+            var targetArg = args.FirstOrDefault(a =>
+                a.StartsWith("--target=", StringComparison.OrdinalIgnoreCase));
+            var targetName = targetArg?["--target=".Length..];
+
             var exitCode = isHitTest
-                ? HitTest.Run(_reader, sample, shotPath)
-                : SelfTest.Run(_uiaWorker, _reader, sample, hold, shotPath, accept, english);
+                ? HitTest.Run(_reader, sample, shotPath, targetName)
+                : SelfTest.Run(_uiaWorker, _reader, sample, hold, shotPath, accept, english, targetName);
 
             _uiaWorker.Dispose();
             return exitCode;
@@ -192,6 +223,11 @@ internal static class Program
             Console.WriteLine($"[重载] {(reloaded ? "✓" : "✗")} {reloadMessage}");
             _uiaWorker.Dispose();
             return reloaded ? 0 : 1;
+        }
+
+        if (args.Any(a => a.StartsWith("--shot-window=", StringComparison.OrdinalIgnoreCase)))
+        {
+            return CaptureWindowShot(args, _uiaWorker);
         }
 
         if (args.Any(a => a.Equals("--shot-only", StringComparison.OrdinalIgnoreCase)))
@@ -411,6 +447,11 @@ internal static class Program
                           $"（0x0804 表示简体中文）");
         Console.WriteLine($"[系统] 微软拼音已安装 = {MsPinyinDetector.IsMsPinyinInstalled()}");
 
+        // 同一语言下可能装了多个输入法（例如搜狗 + 微软拼音），布局 Id 一模一样，
+        // 只有 TSF 的生效配置能区分。测出来的结论属于谁，全看这一行。
+        var activeIme = ImeProfile.GetActive();
+        Console.WriteLine($"[系统] 当前生效输入法 = {activeIme?.Description ?? "(未知)"}");
+
         var settings = MsPinyinDetector.ReadSettingsSnapshot();
         if (settings.Count > 0)
         {
@@ -427,6 +468,257 @@ internal static class Program
         {
             Console.WriteLine("[设置] 未读到微软拼音设置（可能未安装或注册表不可访问）");
         }
+    }
+
+    /// <summary>
+    /// 只截某个窗口本身，不截屏幕。
+    /// </summary>
+    /// <param name="args">命令行参数。</param>
+    /// <param name="worker">UIA 线程，仅在退出时释放。</param>
+    /// <returns>进程退出码。</returns>
+    /// <remarks>
+    /// 与 <c>--shot-only</c> 的区别：那个走屏幕 DC，窗口被遮挡或不在最前时抓到的是别人的内容；
+    /// 这里让窗口自己渲染，前后台都不影响，也**不会把窗口切到前台**（截图不该有副作用）。
+    /// </remarks>
+    private static int CaptureWindowShot(string[] args, UiaWorker worker)
+    {
+        var name = args
+            .First(a => a.StartsWith("--shot-window=", StringComparison.OrdinalIgnoreCase))
+            ["--shot-window=".Length..];
+
+        var shotArg = args.FirstOrDefault(a => a.StartsWith("--shot=", StringComparison.OrdinalIgnoreCase));
+        var path = shotArg is null ? "window.bmp" : shotArg["--shot=".Length..];
+
+        var scaleArg = args.FirstOrDefault(a => a.StartsWith("--scale=", StringComparison.OrdinalIgnoreCase));
+        var scale = scaleArg is not null && int.TryParse(scaleArg["--scale=".Length..], out var parsed)
+            ? Math.Max(1, parsed)
+            : 1;
+
+        var handle = TargetWindow.Find(name);
+        if (handle == IntPtr.Zero)
+        {
+            handle = TargetWindow.FindByTitle(name);
+        }
+
+        if (handle == IntPtr.Zero)
+        {
+            Console.WriteLine($"[截图] ✗ 没找到匹配「{name}」的窗口");
+            worker.Dispose();
+            return 1;
+        }
+
+        NativeMethods.GetWindowRect(handle, out var rect);
+        var state = TargetWindow.IsMinimized(handle) ? "已最小化" : "正常";
+        Console.WriteLine($"[截图] 目标 0x{handle.ToInt64():X} " +
+                          $"{WindowProcess.GetProcessName(handle)} " +
+                          $"({rect.Left},{rect.Top}) {rect.Width}x{rect.Height} {state}");
+
+        if (!ScreenGrabber.CaptureWindow(handle, path, scale, out var width, out var height))
+        {
+            Console.WriteLine("[截图] ✗ 窗口拒绝渲染（最小化、受保护内容或纯分层窗口），" +
+                              "可改用 --shot-only 从屏幕抓");
+            worker.Dispose();
+            return 1;
+        }
+
+        Console.WriteLine($"[截图] {path}（{width}x{height}）");
+        worker.Dispose();
+        return 0;
+    }
+
+    /// <summary>
+    /// 直接读本机微软拼音的自定义短语与自学习词库，确认文件路径与格式对得上。
+    /// </summary>
+    /// <param name="worker">UIA 线程，仅在退出时释放。</param>
+    /// <returns>进程退出码：两个文件都读成功返回 0。</returns>
+    /// <remarks>
+    /// 这两份文件的路径与二进制格式都是微软的内部约定，跨 Windows 版本可能变化。
+    /// 用程序自己的解析器去读真实文件，比在设置界面里数行数更可靠：
+    /// 解析器坏掉时，界面只会显示空列表，看不出是「没数据」还是「读不懂」。
+    /// </remarks>
+    private static int DumpWordbooks(UiaWorker worker)
+    {
+        var allOk = true;
+
+        var phrases = new MspyPhraseStore();
+        Console.WriteLine($"[短语] {phrases.FilePath}");
+        Console.WriteLine($"[短语] 文件存在 = {phrases.Exists}");
+        var phraseList = phrases.Read(out var phraseError);
+        Console.WriteLine(phraseError is null
+            ? $"[短语] ✓ 读到 {phraseList.Count} 条"
+            : $"[短语] ✗ {phraseError}");
+        allOk &= phraseError is null;
+
+        foreach (var phrase in phraseList.Take(10))
+        {
+            Console.WriteLine($"    {phrase.Pinyin} → {phrase.Text}（位置 {phrase.Position}）");
+        }
+
+        var learning = new MspyLearningStore();
+        Console.WriteLine($"[自学习] {learning.FilePath}");
+        Console.WriteLine($"[自学习] 文件存在 = {learning.Exists}");
+
+        if (learning.Exists)
+        {
+            var read = learning.TryRead(out var words, out var learningError);
+            Console.WriteLine(read
+                ? $"[自学习] ✓ 读到 {words.Count} 条"
+                : $"[自学习] ✗ {learningError}");
+            allOk &= read;
+
+            foreach (var word in words.Take(10))
+            {
+                Console.WriteLine($"    {word.Text}  简拼={word.Jianpin}  长度={word.Length}");
+            }
+        }
+        else
+        {
+            Console.WriteLine("[自学习] 还没有自学习词库（输入法尚未学习过任何词）");
+        }
+
+        worker.Dispose();
+        return allOk ? 0 : 1;
+    }
+
+    /// <summary>
+    /// 列出本机键盘布局，或把目标线程切到指定布局。
+    /// </summary>
+    /// <param name="args">命令行参数。</param>
+    /// <param name="worker">UIA 线程，仅在退出时释放。</param>
+    /// <returns>进程退出码。</returns>
+    /// <remarks>
+    /// 键盘布局是每线程的：控制台处于中文布局，不代表要测试的那个窗口也是。
+    /// 打字前先把目标线程钉在简体中文上，才能排除「其实在英文键盘上打字」这类假阴性。
+    /// </remarks>
+    private static int HandleLayoutCommands(string[] args, UiaWorker worker)
+    {
+        var count = NativeMethods.GetKeyboardLayoutList(0, null);
+        var buffer = new IntPtr[Math.Max(count, 0)];
+        var written = count > 0 ? NativeMethods.GetKeyboardLayoutList(buffer.Length, buffer) : 0;
+
+        Console.WriteLine($"[布局] 本机共 {written} 个键盘布局：");
+        for (var i = 0; i < written; i++)
+        {
+            var hkl = buffer[i];
+            var languageId = (ushort)(hkl.ToInt64() & 0xFFFF);
+            Console.WriteLine($"    HKL=0x{hkl.ToInt64():X8}  KLID=0000{languageId:X4}  " +
+                              $"语言=0x{languageId:X4}");
+        }
+
+        var applyArg = args.FirstOrDefault(a =>
+            a.StartsWith("--layout=apply:", StringComparison.OrdinalIgnoreCase));
+        if (applyArg is null)
+        {
+            worker.Dispose();
+            return 0;
+        }
+
+        // 接受 "00000804" 这种标准 KLID，也接受 "08040804" 这种直接抄 HKL 的写法：
+        // KLID 的后四位是语言 Id，前四位对常规布局恒为 0000。
+        var raw = applyArg["--layout=apply:".Length..].Trim();
+        if (raw.Length < 4)
+        {
+            Console.WriteLine($"[布局] ✗ KLID 至少要有 4 位十六进制，收到「{raw}」");
+            worker.Dispose();
+            return 1;
+        }
+
+        var klid = "0000" + raw[^4..];
+
+        var targetArg = args.FirstOrDefault(a =>
+            a.StartsWith("--target=", StringComparison.OrdinalIgnoreCase));
+        var handle = targetArg is null
+            ? NativeMethods.GetForegroundWindow()
+            : TargetWindow.Find(targetArg["--target=".Length..]);
+
+        if (handle == IntPtr.Zero)
+        {
+            Console.WriteLine("[布局] ✗ 没有可用目标窗口");
+            worker.Dispose();
+            return 1;
+        }
+
+        var loaded = NativeMethods.LoadKeyboardLayout(klid, 0x00000001);
+        if (loaded == IntPtr.Zero)
+        {
+            Console.WriteLine($"[布局] ✗ LoadKeyboardLayout({klid}) 失败");
+            worker.Dispose();
+            return 1;
+        }
+
+        NativeMethods.PostMessage(handle, NativeMethods.WM_INPUTLANGCHANGEREQUEST, IntPtr.Zero, loaded);
+        Thread.Sleep(400);
+
+        var threadId = NativeMethods.GetWindowThreadProcessId(handle, out _);
+        var current = threadId == 0 ? IntPtr.Zero : NativeMethods.GetKeyboardLayout(threadId);
+        var ok = current == loaded;
+        Console.WriteLine(ok
+            ? $"[布局] ✓ 目标线程已切到 HKL=0x{current.ToInt64():X8}"
+            : $"[布局] ✗ 切换未生效，目标线程仍是 HKL=0x{current.ToInt64():X8}");
+
+        worker.Dispose();
+        return ok ? 0 : 1;
+    }
+
+    /// <summary>
+    /// 列出简中下注册的输入法、标出当前生效的那个，并可切换到指定输入法。
+    /// </summary>
+    /// <param name="args">命令行参数。</param>
+    /// <param name="worker">UIA 线程，仅在退出时释放。</param>
+    /// <returns>进程退出码。</returns>
+    private static int HandleImeCommands(string[] args, UiaWorker worker)
+    {
+        var installed = ImeProfile.EnumerateInstalled();
+        var active = ImeProfile.GetActive();
+
+        Console.WriteLine($"[输入法] 简体中文下注册 {installed.Count} 个：");
+        foreach (var entry in installed)
+        {
+            var mark = active is not null && active.Value.ProfileId == entry.ProfileId ? "  ← 当前生效" : string.Empty;
+            Console.WriteLine($"    {entry.Description,-26} {entry.Clsid}{mark}");
+        }
+
+        var useArg = args.FirstOrDefault(a =>
+            a.StartsWith("--ime=use:", StringComparison.OrdinalIgnoreCase));
+        if (useArg is null)
+        {
+            worker.Dispose();
+            return 0;
+        }
+
+        var keyword = useArg["--ime=use:".Length..];
+        var target = ImeProfile.FindByDescription(keyword);
+        if (target is null)
+        {
+            Console.WriteLine($"[输入法] ✗ 没有找到描述包含「{keyword}」的输入法");
+            worker.Dispose();
+            return 1;
+        }
+
+        Console.WriteLine($"[输入法] 切换到 {target.Value.Description} …");
+        if (!ImeProfile.Activate(target.Value))
+        {
+            worker.Dispose();
+            return 1;
+        }
+
+        Thread.Sleep(400);
+
+        var after = ImeProfile.GetActive();
+        if (after is null)
+        {
+            Console.WriteLine("[输入法] ✗ 切换后查不到生效的输入法");
+            worker.Dispose();
+            return 1;
+        }
+
+        var ok = after.Value.ProfileId == target.Value.ProfileId;
+        Console.WriteLine(ok
+            ? $"[输入法] ✓ 当前生效 = {after.Value.Description}"
+            : $"[输入法] ✗ 切换未生效，当前仍是 {after.Value.Description}");
+
+        worker.Dispose();
+        return ok ? 0 : 1;
     }
 
     private static bool TryParseRect(string text, out int x, out int y, out int width, out int height)
@@ -481,15 +773,17 @@ internal static class Program
             return 2;
         }
 
+        // 必须按「真实按键」注入（不带 InjectionMarker）。
+        // 带标记的注入会被被测程序识别成自己人发的，直接忽略，测出来全是假阴性。
         foreach (var key in keys)
         {
-            KeySender.SendKeyState(key, down: true);
+            KeySender.SendKeyState(key, down: true, markAsOwn: false);
             Thread.Sleep(30);
         }
 
         for (var i = keys.Count - 1; i >= 0; i--)
         {
-            KeySender.SendKeyState(keys[i], down: false);
+            KeySender.SendKeyState(keys[i], down: false, markAsOwn: false);
             Thread.Sleep(30);
         }
 

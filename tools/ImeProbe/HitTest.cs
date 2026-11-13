@@ -23,35 +23,51 @@ internal static class HitTest
     /// <param name="reader">候选窗读取器。</param>
     /// <param name="sample">模拟输入的拼音串。</param>
     /// <param name="shotPath">可选截图路径。</param>
+    /// <param name="targetName">目标进程名；给出时使用已存在的窗口，不再启动记事本。</param>
     /// <returns>退出码：0 表示命中了疑似候选窗。</returns>
-    public static int Run(UiaCandidateWindowReader reader, string sample, string? shotPath)
+    public static int Run(
+        UiaCandidateWindowReader reader,
+        string sample,
+        string? shotPath,
+        string? targetName = null)
     {
-        Console.WriteLine($"[命中] 打开记事本并模拟输入 \"{sample}\"，随后在插入符附近逐点探测");
+        Process? owned = null;
+        var adopted = false;
+        IntPtr editorHandle;
 
-        using var notepad = SelfTest.StartNotepad();
-        if (notepad is null)
+        if (targetName is null)
         {
-            Console.WriteLine("[命中] 无法启动记事本");
-            return 2;
+            Console.WriteLine($"[命中] 打开记事本并模拟输入 \"{sample}\"，随后在插入符附近逐点探测");
+
+            editorHandle = SelfTest.AcquireNotepad(out owned, out adopted);
+            if (editorHandle == IntPtr.Zero)
+            {
+                Console.WriteLine("[命中] ✗ 拿不到可用的记事本窗口。若本机是 Windows 11，" +
+                                  "请先手动打开记事本，再改用 --target=Notepad");
+                return 3;
+            }
         }
-
-        var editorHandle = SelfTest.WaitForMainWindow(notepad, TimeSpan.FromSeconds(6));
-        if (editorHandle == IntPtr.Zero)
+        else
         {
-            Console.WriteLine("[命中] 等待记事本窗口超时");
-            SelfTest.SafeKill(notepad);
-            return 3;
+            // Win11 的记事本窗口不属于启动它的进程，只能按进程名找现成的窗口。
+            Console.WriteLine($"[命中] 在已存在的 {targetName} 窗口里模拟输入 \"{sample}\"，随后逐点探测");
+            editorHandle = TargetWindow.Activate(targetName);
+            if (editorHandle == IntPtr.Zero)
+            {
+                Console.WriteLine("[命中] ✗ 目标窗口不可用，已中止（不发送任何按键）");
+                return 6;
+            }
         }
 
         NativeMethods.ShowWindow(editorHandle, NativeMethods.SW_RESTORE);
         if (!NativeMethods.ForceForegroundWindow(editorHandle))
         {
-            Console.WriteLine("[命中] ✗ 无法把记事本切到前台，已中止（不发送任何按键）");
-            SelfTest.SafeKill(notepad);
+            Console.WriteLine("[命中] ✗ 无法把目标窗口切到前台，已中止（不发送任何按键）");
+            SelfTest.ReleaseTarget(owned, editorHandle, adopted);
             return 6;
         }
 
-        var editHandle = NativeMethods.FindWindowEx(editorHandle, IntPtr.Zero, "Edit", null);
+        var editHandle = SelfTest.FindEditorChild(editorHandle);
         if (editHandle != IntPtr.Zero)
         {
             NativeMethods.SetFocus(editHandle);
@@ -61,21 +77,22 @@ internal static class HitTest
         if (NativeMethods.GetForegroundWindow() != editorHandle)
         {
             Console.WriteLine("[命中] ✗ 前台已变化，已中止");
-            SelfTest.SafeKill(notepad);
+            SelfTest.ReleaseTarget(owned, editorHandle, adopted);
             return 6;
         }
 
         SelfTest.TypePinyin(sample);
         Thread.Sleep(350);
 
-        var origin = ResolveProbeOrigin();
+        var origin = ResolveProbeOrigin(editorHandle);
         Console.WriteLine($"[命中] 探测原点 = ({origin.X},{origin.Y})，来源 = {DescribeOrigin()}");
 
         // 候选条通常出现在插入符下方，也可能被上方翻转，因此双向都探。
         int[] offsetsY = { 2, 8, 18, 28, 40, -22, -34 };
         int[] offsetsX = { 0, 24, 60, 120, -24 };
 
-        var hits = new Dictionary<IntPtr, string>();
+        // 同一个窗口会被很多探测点重复命中，按句柄归并后再输出，否则日志里全是重复行。
+        var hits = new Dictionary<IntPtr, (string Description, List<string> Points)>();
         foreach (var dy in offsetsY)
         {
             foreach (var dx in offsetsX)
@@ -88,15 +105,22 @@ internal static class HitTest
                     continue;
                 }
 
-                var description = DescribeWindow(hwnd);
-                var key = $"{x,5},{y,5} → {description}";
-                Console.WriteLine($"    {key}");
-
-                if (!hits.ContainsKey(hwnd))
+                if (!hits.TryGetValue(hwnd, out var entry))
                 {
-                    hits[hwnd] = description;
+                    entry = (DescribeWindow(hwnd), new List<string>(8));
+                    hits[hwnd] = entry;
                 }
+
+                entry.Points.Add($"({x},{y})");
             }
+        }
+
+        Console.WriteLine($"[命中] 共命中 {hits.Count} 个不同窗口：");
+        foreach (var (hwnd, entry) in hits)
+        {
+            Console.WriteLine($"    0x{hwnd.ToInt64():X} × {entry.Points.Count} 点 " +
+                              $"[{string.Join(' ', entry.Points)}]");
+            Console.WriteLine($"        {entry.Description}");
         }
 
         // 把输入法宿主窗口也列出来对比，说明"枚举到的"和"命中的"不是同一个窗口。
@@ -109,9 +133,9 @@ internal static class HitTest
                               $"cloaked={NativeMethods.IsCloaked(handle)}");
         }
 
-        Console.WriteLine($"[命中] 不同窗口共 {hits.Count} 个，逐个尝试读取 UIA 子树：");
+        Console.WriteLine("[命中] 逐个尝试读取这些窗口的 UIA 子树：");
         var candidateFound = false;
-        foreach (var (hwnd, description) in hits)
+        foreach (var (hwnd, entry) in hits)
         {
             NativeMethods.GetWindowRect(hwnd, out var rect);
             var isSmallWindow = rect.Width > 0 && rect.Height > 0 &&
@@ -120,7 +144,7 @@ internal static class HitTest
             var elements = reader.ReadAllElements(hwnd);
             var listItems = elements.Count(e => e.ControlType == UiaCandidateWindowReader.ListItemControlTypeId && !e.IsOffscreen);
 
-            Console.WriteLine($"    ── 0x{hwnd.ToInt64():X} {description}");
+            Console.WriteLine($"    ── 0x{hwnd.ToInt64():X}");
             Console.WriteLine($"       元素总数={elements.Count}，可见 ListItem={listItems}，" +
                               $"疑似候选窗={(isSmallWindow ? "是" : "否")}");
             Console.WriteLine($"       诊断：{UiaCandidateWindowReader.LastDiagnostic}");
@@ -156,7 +180,7 @@ internal static class HitTest
 
         KeySender.SendVirtualKey(0x1B, markAsOwn: false);
         Thread.Sleep(120);
-        SelfTest.SafeKill(notepad);
+        SelfTest.ReleaseTarget(owned, editorHandle, adopted);
 
         Console.WriteLine(candidateFound
             ? "[命中] ✓ 找到可读取的候选列表"
@@ -165,10 +189,11 @@ internal static class HitTest
         return candidateFound ? 0 : 4;
     }
 
-    private static NativePoint ResolveProbeOrigin()
+    private static NativePoint ResolveProbeOrigin(IntPtr targetWindow)
     {
-        var foreground = NativeMethods.GetForegroundWindow();
-        var threadId = NativeMethods.GetWindowThreadProcessId(foreground, out _);
+        // 取目标窗口自己线程的插入符，而不是"当前前台窗口"的。
+        // 否则测试期间一旦有别的窗口抢到前台，锚点就会跑到那个窗口上，探测全盘失效。
+        var threadId = NativeMethods.GetWindowThreadProcessId(targetWindow, out _);
 
         if (threadId != 0)
         {
@@ -184,7 +209,12 @@ internal static class HitTest
             }
         }
 
-        // 拿不到插入符时退回鼠标位置，至少让流程能继续。
+        // 拿不到插入符时退回输入框左上角附近，至少让流程能继续。
+        if (NativeMethods.GetWindowRect(targetWindow, out var rect))
+        {
+            return new NativePoint { X = rect.Left + 24, Y = rect.Top + 60 };
+        }
+
         return NativeMethods.GetCursorPos(out var cursor) ? cursor : new NativePoint { X = 200, Y = 200 };
     }
 

@@ -48,7 +48,16 @@ dotnet run --project tools/ImeProbe -- --hit-test yisitalu
 
 # 截图取证（可裁剪、可缩放）
 dotnet run --project tools/ImeProbe -- --shot-only --rect=470,170,1010,700 --scale=1 --shot=out.bmp
+
+# 只截某个窗口本身：按进程名或标题匹配，窗口不在前台、被挡住都不影响
+dotnet run --project tools/ImeProbe -- --shot-window=Notepad --shot=out.bmp
+dotnet run --project tools/ImeProbe -- --shot-window=Better\ 微软拼音 --shot=out.bmp
 ```
+
+`--shot-only` 走屏幕 DC 的 `BitBlt`，抓的是"屏幕上这一块像素"——窗口被遮挡时拿到的是遮挡者的内容。
+`--shot-window` 走 `PrintWindow` + `PW_RENDERFULLCONTENT`，让窗口自己渲染，前后台无关，也**不会改变前台窗口**。
+两者输出的都是 32 位 BMP。窗口最小化、受保护内容、或纯分层窗口（例如候选浮窗）可能拒绝渲染，
+此时会打印原因并返回非零，可退回 `--shot-only` 从屏幕抓。
 
 `--self-test` 的退出码：`0` 成功，`4` 没找到候选窗，`6` 前台抢焦失败（此时不会发送任何按键）。
 
@@ -70,6 +79,37 @@ dotnet run --project tools/ImeProbe -- --activate-app --send-keys=09,09,09,09,73
 ```
 
 界面相关还有一个开发参数：`dotnet run --project src/BetterPinyin.App -- --page=外观` 可以直接打开指定的设置页（页名与左侧导航一致），省去手点。
+
+### 在 Windows 11 上测试
+
+Windows 11 改了记事本（UWP 应用），也更容易出现「同时装了多个中文输入法」的情况，
+所以上面两条最常用的命令需要配合几个参数：
+
+```bash
+# Win11 的记事本窗口不属于启动它的进程，启动进程会立刻退出 → 用 --target 直接指定已存在的窗口
+dotnet run --project tools/ImeProbe -- --self-test yisitalu --target=Notepad
+dotnet run --project tools/ImeProbe -- --hit-test yisitalu --target=Notepad
+
+# 只看不动手：把目标窗口切到前台、发一串真实按键（不带注入标记，程序会当成用户输入）
+dotnet run --project tools/ImeProbe -- --focus=Notepad --hotkey=52,55,4F,4E,41,57,41
+
+# 当前生效的是哪个输入法（搜狗 + 微软拼音可以同时装在简中下，键盘布局 Id 一样）
+dotnet run --project tools/ImeProbe -- --ime
+
+# 键盘布局是每线程的：控制台在中文不代表被测窗口也在中文，必要时钉住目标线程
+dotnet run --project tools/ImeProbe -- --layout
+dotnet run --project tools/ImeProbe -- --layout=apply:00000804 --target=Notepad
+
+# 直接读本机微软拼音的两份词库文件，确认路径与格式还对得上
+dotnet run --project tools/ImeProbe -- --wordbook
+```
+
+两个坑值得先知道：
+
+1. **`--hotkey` 发的是「真实按键」而不是带标记的注入**。带标记的注入会被被测程序识别成自己人发的直接忽略，
+   测出来全是假阴性（日志里 `own=True`）。
+2. **`--ime` 的「当前生效」只能算尽力而为**：TSF 的语言配置是每线程的，后台进程查不到时会显示「未知」。
+   判断输入法身份更可靠的办法是看候选窗类名 —— 搜狗是目标进程内的 `SoPY_Comp`，微软拼音是 `TextInputHost` 里的 `CoreWindow`。
 
 `BetterPinyin.Tests -- --probe <拼音> candidate=<候选>` 可以单独观察某个候选的读音判定结果（`Strict` / `Extended` / `None`），排查"为什么这个词没出现"时最直接。
 

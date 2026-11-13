@@ -19,6 +19,11 @@ internal static class SelfTest
     /// <param name="worker">UIA 线程。</param>
     /// <param name="reader">候选窗读取器。</param>
     /// <param name="sample">要模拟输入的拼音串。</param>
+    /// <param name="holdSeconds">输入后保持画面的秒数，便于外部截图。</param>
+    /// <param name="shotPath">截图保存路径。</param>
+    /// <param name="acceptKey">采纳键的虚拟键码。</param>
+    /// <param name="englishMode">是否验证英文模式。</param>
+    /// <param name="targetName">目标进程名；给出时使用已存在的窗口，不再启动记事本。</param>
     /// <returns>进程退出码：0 表示成功读到候选窗。</returns>
     public static int Run(
         UiaWorker worker,
@@ -27,38 +32,52 @@ internal static class SelfTest
         int holdSeconds = 0,
         string? shotPath = null,
         int acceptKey = 0,
-        bool englishMode = false)
+        bool englishMode = false,
+        string? targetName = null)
     {
-        Console.WriteLine($"[自测] 将打开记事本并模拟输入 \"{sample}\"（采纳键 0x{acceptKey:X2}）");
-        Console.WriteLine("[自测] 注意：期间会抢占前台窗口，约 5 秒后自动恢复");
+        Console.WriteLine($"[自测] 将输入 \"{sample}\"（采纳键 0x{acceptKey:X2}）");
 
-        using var notepad = StartNotepad();
-        if (notepad is null)
+        Process? owned = null;
+        var adopted = false;
+        IntPtr editorHandle;
+
+        if (targetName is null)
         {
-            Console.WriteLine("[自测] 无法启动记事本");
-            return 2;
+            Console.WriteLine("[自测] 将打开记事本并模拟输入，期间会抢占前台窗口，约 5 秒后自动恢复");
+            editorHandle = AcquireNotepad(out owned, out adopted);
+            if (editorHandle == IntPtr.Zero)
+            {
+                Console.WriteLine("[自测] ✗ 拿不到可用的记事本窗口。若本机是 Windows 11，" +
+                                  "请先手动打开记事本，再改用 --target=Notepad");
+                return 3;
+            }
         }
-
-        var editorHandle = WaitForMainWindow(notepad, TimeSpan.FromSeconds(6));
-        if (editorHandle == IntPtr.Zero)
+        else
         {
-            Console.WriteLine("[自测] 等待记事本窗口超时");
-            SafeKill(notepad);
-            return 3;
+            // Win11 的记事本是 UWP：启动进程不等于窗口进程，只能按进程名找现成的窗口。
+            Console.WriteLine($"[自测] 使用已存在的 {targetName} 窗口");
+            editorHandle = TargetWindow.Activate(targetName);
+            if (editorHandle == IntPtr.Zero)
+            {
+                Console.WriteLine("[自测] ✗ 目标窗口不可用，已中止，未发送任何按键");
+                return 3;
+            }
         }
 
         NativeMethods.ShowWindow(editorHandle, NativeMethods.SW_RESTORE);
         var focused = NativeMethods.ForceForegroundWindow(editorHandle);
         Console.WriteLine(focused
-            ? "[自测] 已把记事本切到前台"
-            : "[自测] 未能把记事本切到前台，输入可能落到了别的窗口");
+            ? "[自测] 已把目标切到前台"
+            : "[自测] 未能把目标切到前台，输入可能落到了别的窗口");
         Thread.Sleep(300);
 
-        // 记事本的编辑区是子控件，必须把焦点交给它，否则按键没有落点。
-        var editHandle = NativeMethods.FindWindowEx(editorHandle, IntPtr.Zero, "Edit", null);
+        // 编辑器是子控件，必须把焦点交给它，否则按键没有落点。
+        // Win11 记事本换成了 RichEditD2DPT，类名不再是 Edit，所以要逐个试。
+        var editHandle = FindEditorChild(editorHandle);
         Console.WriteLine(editHandle != IntPtr.Zero
-            ? $"[自测] 找到编辑区 0x{editHandle.ToInt64():X}"
-            : "[自测] 未找到 Edit 子控件（记事本可能是新版控件结构）");
+            ? $"[自测] 找到编辑区 0x{editHandle.ToInt64():X} " +
+              $"（类名 {NativeMethods.GetWindowClassName(editHandle)}）"
+            : "[自测] 未找到编辑子控件（文本回读将不可用，但输入与候选窗判定仍有效）");
 
         if (editHandle != IntPtr.Zero)
         {
@@ -73,10 +92,23 @@ internal static class SelfTest
         if (foreground != editorHandle)
         {
             // 抢焦失败时绝不能继续发送按键，否则会把字母打进用户正在使用的窗口。
-            Console.WriteLine("[自测] ✗ 前台不是记事本，已中止，未发送任何按键");
+            Console.WriteLine("[自测] ✗ 前台不是目标窗口，已中止，未发送任何按键");
             DumpImeWindowCandidates(reader);
-            SafeKill(notepad);
+            ReleaseTarget(owned, editorHandle, adopted);
             return 6;
+        }
+
+        if (targetName is null && !englishMode)
+        {
+            // Windows 11 的记事本会恢复上一次未保存的内容，正文不再是空的，
+            // 「采纳后内容是否变化」这条判据就会失真。测的是自己起的窗口，先清空再输入。
+            // --target 模式不能这么做：那可能是用户正在编辑的文档。
+            KeySender.SendKeyState(0x11, down: true, markAsOwn: false);
+            KeySender.SendVirtualKey(0x41, markAsOwn: false);
+            KeySender.SendKeyState(0x11, down: false, markAsOwn: false);
+            Thread.Sleep(80);
+            KeySender.SendVirtualKey(0x2E, markAsOwn: false);
+            Thread.Sleep(150);
         }
 
         if (englishMode)
@@ -109,7 +141,7 @@ internal static class SelfTest
             }
 
             CancelComposition();
-            SafeKill(notepad);
+            ReleaseTarget(owned, editorHandle, adopted);
             return 0;
         }
 
@@ -155,7 +187,7 @@ internal static class SelfTest
             DumpImeWindowCandidates(reader);
             DumpHostElementTree(reader);
             CancelComposition();
-            SafeKill(notepad);
+            ReleaseTarget(owned, editorHandle, adopted);
             return 4;
         }
 
@@ -191,7 +223,7 @@ internal static class SelfTest
 
         CancelComposition();
         Thread.Sleep(150);
-        SafeKill(notepad);
+        ReleaseTarget(owned, editorHandle, adopted);
 
         return snapshot.Items.Count > 0 ? 0 : 5;
     }
@@ -269,6 +301,60 @@ internal static class SelfTest
         }
     }
 
+    /// <summary>编辑区可能使用的窗口类名，按从旧到新排列。</summary>
+    /// <remarks>
+    /// Windows 10 的记事本用 <c>Edit</c>；Windows 11 的记事本换成了 WinUI + RichEditD2DPT，
+    /// 类名不再固定，所以逐个尝试而不是写死一个。
+    /// </remarks>
+    private static readonly string[] EditorClassNames =
+    {
+        "Edit",
+        "RichEditD2DPT",
+        "RichEdit20W",
+        "RICHEDIT50W",
+    };
+
+    /// <summary>在窗口的子树里找编辑控件。</summary>
+    /// <param name="parent">父窗口句柄。</param>
+    /// <returns>编辑控件句柄；找不到返回 <see cref="IntPtr.Zero"/>。</returns>
+    /// <remarks>
+    /// Win11 的记事本把 RichEditD2DPT 藏在标签页容器下面，不在第一层子级，
+    /// 所以必须递归；深度限制只是为了不去遍历整个应用窗口树。
+    /// </remarks>
+    internal static IntPtr FindEditorChild(IntPtr parent)
+    {
+        return FindEditorChild(parent, depth: 0);
+    }
+
+    private static IntPtr FindEditorChild(IntPtr parent, int depth)
+    {
+        foreach (var className in EditorClassNames)
+        {
+            var handle = NativeMethods.FindWindowEx(parent, IntPtr.Zero, className, null);
+            if (handle != IntPtr.Zero)
+            {
+                return handle;
+            }
+        }
+
+        if (depth >= 3)
+        {
+            return IntPtr.Zero;
+        }
+
+        var child = IntPtr.Zero;
+        while ((child = NativeMethods.FindWindowEx(parent, child, null, null)) != IntPtr.Zero)
+        {
+            var found = FindEditorChild(child, depth + 1);
+            if (found != IntPtr.Zero)
+            {
+                return found;
+            }
+        }
+
+        return IntPtr.Zero;
+    }
+
     private static string ReadEditorText(IntPtr editHandle)
     {
         if (editHandle == IntPtr.Zero)
@@ -287,9 +373,87 @@ internal static class SelfTest
         Thread.Sleep(80);
     }
 
-    internal static Process? StartNotepad()
+    /// <summary>
+    /// 准备一个可输入的记事本窗口：优先自己启动，失败时接管启动之后新出现的窗口。
+    /// </summary>
+    /// <param name="owned">自己启动的进程（需要由调用方结束）；接管来的窗口为 null。</param>
+    /// <param name="adopted">是否接管了别人的窗口而非自己启动的。</param>
+    /// <returns>窗口句柄；拿不到返回 <see cref="IntPtr.Zero"/>。</returns>
+    /// <remarks>
+    /// Windows 10 的记事本是普通 Win32 程序，启动进程就是窗口进程，走第一条分支即返回。
+    /// Windows 11 换成了 UWP：启动的是个立刻退出的转发进程，窗口挂在另一个 PID 上，
+    /// 因此退一步去找「启动之后才出现」的记事本窗口 —— 只认新增的，
+    /// 避免把用户本来开着的文档当成测试目标。
+    /// </remarks>
+    internal static IntPtr AcquireNotepad(out Process? owned, out bool adopted)
     {
-        try
+        owned = null;
+        adopted = false;
+
+        var existing = TargetWindow.ListByProcessName("Notepad");
+
+        owned = StartNotepad();
+        if (owned is not null)
+        {
+            var handle = WaitForMainWindow(owned, TimeSpan.FromSeconds(6));
+            if (handle != IntPtr.Zero)
+            {
+                return handle;
+            }
+
+            // 启动了个没有窗口的进程，留着也没用。
+            SafeKill(owned);
+            owned = null;
+        }
+
+        var fresh = TargetWindow.WaitForNewWindow("Notepad", existing, TimeSpan.FromSeconds(4));
+        if (fresh != IntPtr.Zero)
+        {
+            adopted = true;
+            Console.WriteLine("[自测] 启动进程拿不到窗口（Windows 11 的记事本是 UWP），已接管新出现的窗口");
+            return fresh;
+        }
+
+        return IntPtr.Zero;
+    }
+
+    /// <summary>
+    /// 收尾：结束本次测试用的窗口，用户自己的窗口一律不动。
+    /// </summary>
+    /// <param name="owned">自己启动的进程，可为 null。</param>
+    /// <param name="handle">测试用的窗口句柄。</param>
+    /// <param name="adopted">该窗口是否来自接管。</param>
+    /// <remarks>
+    /// 接管来的窗口用结束进程而不是 <c>WM_CLOSE</c>：文档里有测试输入的文字，
+    /// 正常关闭会弹出「是否保存」对话框，把无人值守的测试卡死在模态框上。
+    /// 之所以敢直接结束：只有「启动前不存在、启动后新出现」的窗口才会被接管，
+    /// 所以这个进程里不会有用户自己的内容。
+    /// </remarks>
+    internal static void ReleaseTarget(Process? owned, IntPtr handle, bool adopted)
+    {
+        if (adopted && handle != IntPtr.Zero)
+        {
+            var processId = WindowProcess.GetProcessId(handle);
+            if (processId != 0)
+            {
+                try
+                {
+                    using var process = Process.GetProcessById((int)processId);
+                    process.Kill(entireProcessTree: false);
+                    process.WaitForExit(1500);
+                }
+                catch (Exception)
+                {
+                    // 进程已退出或无权访问，忽略。
+                }
+            }
+        }
+
+        SafeKill(owned);
+    }
+
+    internal static Process? StartNotepad()
+    {        try
         {
             return Process.Start(new ProcessStartInfo
             {
@@ -321,8 +485,13 @@ internal static class SelfTest
         return IntPtr.Zero;
     }
 
-    internal static void SafeKill(Process process)
+    internal static void SafeKill(Process? process)
     {
+        if (process is null)
+        {
+            return;
+        }
+
         try
         {
             if (!process.HasExited)

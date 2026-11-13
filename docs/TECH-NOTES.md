@@ -307,3 +307,32 @@ WPF-UI 接管不了。失败回滚逻辑（还原 `Window.Background`、`Backgro
 
 界面上的开关以注册表为准：进入页面先 `TryProbe`，读到什么显示什么；写入失败就把开关拨回去，
 不显示假的「已开启」。
+
+## 十九、Windows 11 实测：与 Win10 的异同
+
+以下结论在 Windows 11 24H2（build 26100）+ 微软拼音上实测得到，用来核对前面各节基于 Windows 10 19045 的判断。
+
+**一致的部分**（不需要按系统版本分支）：
+
+- 候选条同样是「按坐标 `WindowFromPoint` 命中、`EnumWindows` 枚举不到」，候选窗属于 `TextInputHost`、
+  类名 `Windows.UI.Core.CoreWindow`、未被隐身、尺寸远小于全屏宿主窗口。
+- UIA 结构同一套：容器 + `ListItem` 候选项，`Quality` 能拿到 `Exact`，候选词文本与矩形都可读。
+- 自定义短语写入 `ChsPinyinEUDPv1.lex` / `v2.lex` 后无需重启输入法，几秒内即可在原生候选中出现，
+  且**同样排在候选第 1 位**（README 里「位置字段不影响排序」的结论在 Win11 上依旧成立）。
+- 自学习词库 `ChsPinyinUDL.dat` 的路径与二进制格式不变，能正常读出词条与简拼。
+- 「切一次键盘布局让输入法重读词库」这个技巧在 Win11 上同样有效。
+
+**不同的部分**：
+
+| 项目 | Windows 10 19045 | Windows 11 26100 |
+|---|---|---|
+| 候选窗容器的 AutomationId | `IME_Prediction_Window` | `IME_Candidate_Window` |
+| 候选条尺寸（同一输入） | 602x45 | 617x36 |
+
+两处差异都已经被现有代码覆盖（`IsCandidateContainer` 同时接受这两个 Id），因此**没有需要改的产品逻辑**。
+
+**测试时最容易踩的坑不在系统，而在输入法本身**：同一台机器可以同时装搜狗拼音和微软拼音，
+两者都注册在简体中文（0x0804）下、键盘布局 Id 完全一样，`GetKeyboardLayout` 分不出谁是谁。
+搜狗会在目标进程内创建 `SoPY_Comp` 合成窗，类名与微软拼音完全不同 ——
+如果测试时没先确认生效的是哪个输入法，会得出「候选窗类名变了、需要适配」的错误结论。
+确认方法见 [DEVELOPMENT.md](DEVELOPMENT.md) 的 `--ime` / `--layout` 两节。
