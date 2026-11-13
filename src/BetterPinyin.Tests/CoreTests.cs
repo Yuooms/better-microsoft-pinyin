@@ -1,10 +1,13 @@
+using BetterPinyin.Contracts;
 using BetterPinyin.Core.Cloud;
 using BetterPinyin.Core.Cloud.Bing;
 using BetterPinyin.Core.Lexicon;
 using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Ranking;
 using BetterPinyin.Core.Settings;
+using BetterPinyin.Core.Statistics;
 using BetterPinyin.Core.Wordbook;
+using BetterPinyin.Interop.Input;
 using BetterPinyin.Interop.Startup;
 using Microsoft.Win32;
 
@@ -77,21 +80,190 @@ internal static class CoreTests
 {
     public static void RunAll()
     {
-        Run("[1/12] Bing 响应解析", Parser);
-        Run("[2/12] 候选清洗", Sanitizer);
-        Run("[3/12] 拼音匹配", Matcher);
-        Run("[4/12] 严格 / 扩展分区", Selector);
-        Run("[5/12] 排序合并（旧链路）", Ranker);
-        Run("[6/12] 设置持久化", Settings);
-        Run("[7/12] 词库词表", Catalog);
-        Run("[8/12] 用户词库", Wordbook);
-        Run("[9/12] 自学习词库", Learning);
-        Run("[10/12] 自学习词库删除", LearningDelete);
-        Run("[11/12] 自学习词库备份", LearningBackup);
-        Run("[12/12] 开机启动登记", StartupRegistrationTest);
+        Run("[1/14] Bing 响应解析", Parser);
+        Run("[2/14] 候选清洗", Sanitizer);
+        Run("[3/14] 拼音匹配", Matcher);
+        Run("[4/14] 严格 / 扩展分区", Selector);
+        Run("[5/14] 排序合并（旧链路）", Ranker);
+        Run("[6/14] 设置持久化", Settings);
+        Run("[7/14] 词库词表", Catalog);
+        Run("[8/14] 用户词库", Wordbook);
+        Run("[9/14] 自学习词库", Learning);
+        Run("[10/14] 自学习词库删除", LearningDelete);
+        Run("[11/14] 自学习词库备份", LearningBackup);
+        Run("[12/14] 开机启动登记", StartupRegistrationTest);
+        Run("[13/14] 输入统计", Statistics);
+        Run("[14/14] 组字状态机", CompositionTrackerStates);
     }
 
     /// <summary>逐组执行，一组崩掉不影响其它组出结论。</summary>
+    private static void Statistics()
+    {
+        var now = new DateTime(2026, 11, 13, 9, 30, 0);
+        var aggregator = new StatisticsAggregator(clock: () => now);
+
+        // 一段完整组字：两次按键、三个字母、以提交结束
+        aggregator.BeginComposition("Code");
+        aggregator.AddKeystroke();
+        aggregator.AddLetters(2);
+        aggregator.AddKeystroke();
+        aggregator.AddLetters(1);
+        aggregator.EndComposition(committed: true);
+
+        var today = aggregator.Snapshot().Single();
+        Check.Equal("2026-11-13", today.Date, "统计日期");
+        Check.Equal(1, today.Totals.Compositions, "组字次数");
+        Check.Equal(3, today.Totals.Letters, "拼音字母数");
+        Check.Equal(2, today.Totals.Keystrokes, "组字期间按键数");
+        Check.Equal(1, today.Totals.Committed, "提交次数");
+        Check.Equal(0, today.Totals.Cancelled, "取消次数");
+        Check.Equal(1, today.GetHour(9).Compositions, "9 点小时的组字次数");
+        Check.Equal(3, today.GetHour(9).Letters, "9 点小时的字母数");
+        Check.Equal(1, today.Apps.Count, "按程序聚合出 1 条");
+        Check.Equal("Code", today.Apps[0].Process, "程序名");
+        Check.Equal(3, today.Apps[0].Letters, "该程序的字母数");
+
+        // 云词采纳：字数按文本长度记，但不保存文本
+        aggregator.AddCloudAccept("若娜瓦");
+        var afterAccept = aggregator.Snapshot().Single();
+        Check.Equal(1, afterAccept.Totals.CloudAccepts, "云词采纳次数");
+        Check.Equal(3, afterAccept.Totals.CloudCharacters, "云词上屏字数");
+
+        // 不在组字状态的按键不计入
+        var keystrokesBefore = afterAccept.Totals.Keystrokes;
+        aggregator.AddKeystroke();
+        Check.Equal(keystrokesBefore, aggregator.Snapshot().Single().Totals.Keystrokes,
+            "非组字期间的按键不计入");
+
+        // 跨天：23:59 开始、00:01 提交，组字记在前一天、提交记在后一天
+        // 第一天的字母数要按「已有 + 跨天前新增的 2 个」算，不能写成绝对值。
+        var lettersOnFirstDayBefore = aggregator.Snapshot().First(d => d.Date == "2026-11-13").Totals.Letters;
+        now = new DateTime(2026, 11, 13, 23, 59, 0);
+        aggregator.BeginComposition("Notepad");
+        aggregator.AddLetters(2);
+        now = new DateTime(2026, 11, 14, 0, 1, 0);
+        aggregator.AddLetters(3);
+        aggregator.EndComposition(committed: true);
+
+        var days = aggregator.Snapshot();
+        Check.Equal(2, days.Count, "跨天后有两个日期桶");
+        var first = days[0];
+        var second = days[1];
+        Check.Equal("2026-11-13", first.Date, "第一天日期");
+        Check.Equal("2026-11-14", second.Date, "第二天日期");
+        Check.Equal(2, first.Totals.Compositions, "跨天组字记在开始那天");
+        Check.Equal(lettersOnFirstDayBefore + 2, first.Totals.Letters, "跨天前的字母记在第一天");
+        Check.Equal(3, second.Totals.Letters, "跨天后的字母记在第二天");
+        Check.Equal(1, second.Totals.Committed, "提交记在结束那天");
+        Check.Equal(0, second.Totals.Compositions, "第二天没有新的组字");
+        Check.Equal(1, first.GetHour(23).Compositions, "23 点桶");
+        Check.Equal(3, second.GetHour(0).Letters, "0 点桶");
+
+        // 取消：与提交互斥
+        now = new DateTime(2026, 11, 14, 10, 0, 0);
+        aggregator.BeginComposition("Code");
+        aggregator.AddLetters(1);
+        aggregator.EndComposition(committed: false);
+        var final = aggregator.Snapshot().Last();
+        Check.Equal(1, final.Totals.Committed, "提交次数不变");
+        Check.Equal(1, final.Totals.Cancelled, "取消次数 +1");
+
+        // 重复日期合并
+        var duplicated = new List<DailyStatistics>
+        {
+            new() { Date = "2026-11-01", Totals = new StatisticsTotals { Letters = 5 } },
+            new() { Date = "2026-11-01", Totals = new StatisticsTotals { Letters = 7 } },
+        };
+        var merged = new StatisticsAggregator(duplicated);
+        Check.Equal(12, merged.Snapshot().Single().Totals.Letters, "重复日期应合并求和");
+
+        // 程序长尾归并
+        var manyApps = new StatisticsAggregator(maxAppsPerDay: 3);
+        for (var i = 0; i < 6; i++)
+        {
+            manyApps.BeginComposition($"App{i}");
+            manyApps.EndComposition(committed: true);
+        }
+
+        var trimmedApps = manyApps.Snapshot().Single().Apps;
+        Check.Equal(3, trimmedApps.Count, "程序条数受上限约束");
+        Check.True(trimmedApps.Any(a => a.Process == StatisticsAggregator.OtherProcess), "长尾并入「其它」");
+        Check.Equal(6, trimmedApps.Sum(a => a.Compositions), "归并后总数不变");
+
+        // 保留期裁剪：保留最近 N 个有记录的日子
+        var fortyDays = Enumerable.Range(0, 40)
+            .Select(i => new DailyStatistics
+            {
+                Date = new DateTime(2026, 1, 1).AddDays(i).ToString("yyyy-MM-dd"),
+            })
+            .ToList();
+        var kept = StatisticsStore.TrimByRetention(fortyDays, 30);
+        Check.Equal(30, kept.Count, "保留期裁剪到 30 条");
+        Check.Equal("2026-01-11", kept[0].Date, "裁掉的是最旧的 10 天");
+        Check.Equal("2026-02-09", kept[^1].Date, "保留到今天为止最新的那条");
+
+        // 落盘与读回
+        var path = Path.Combine(Path.GetTempPath(), "bp-stats-" + Guid.NewGuid().ToString("N") + ".json");
+        using var store = new StatisticsStore(path);
+        Check.True(store.Save(aggregator.Snapshot(), retentionDays: 0), "保存统计");
+        var reloaded = store.Load();
+        Check.Equal(2, reloaded.Count, "读回天数");
+        Check.Equal(second.Totals.Letters + 1, reloaded.Last().Totals.Letters, "读回字母数");
+
+        var json = File.ReadAllText(path);
+        Check.False(json.Contains("若娜瓦"), "统计文件里不应出现输入内容");
+        Check.True(json.Contains("CloudCharacters"), "文件里应只有计数字段");
+
+        // 清空：删文件且不留备份
+        Check.True(store.DeleteAll(), "清空统计");
+        Check.False(File.Exists(path), "清空后文件应消失");
+        Check.Equal(0, store.Load().Count, "清空后读回为空");
+
+        // 损坏文件不应抛异常
+        var brokenPath = Path.Combine(Path.GetTempPath(), "bp-stats-" + Guid.NewGuid().ToString("N") + ".json");
+        File.WriteAllText(brokenPath, "{ 这不是合法 JSON");
+        using var broken = new StatisticsStore(brokenPath);
+        Check.Equal(0, broken.Load().Count, "损坏文件返回空");
+        Check.True(broken.LastError is not null, "损坏文件记录错误");
+        File.Delete(brokenPath);
+
+        if (File.Exists(path))
+        {
+            File.Delete(path);
+        }
+    }
+
+    private static void CompositionTrackerStates()
+    {
+        var tracker = new CompositionTracker();
+        var ended = new List<CompositionEndedEventArgs>();
+        tracker.CompositionEnded += (_, e) => ended.Add(e);
+
+        tracker.Feed((int)'R', isKeyDown: true, ModifierKeys.None);
+        tracker.Feed((int)'U', isKeyDown: true, ModifierKeys.None);
+        tracker.Feed((int)'O', isKeyDown: true, ModifierKeys.None);
+        Check.Equal("ruo", tracker.RawInput, "按键重建拼音串");
+
+        tracker.Feed(0x20, isKeyDown: true, ModifierKeys.None);
+        Check.Equal(1, ended.Count, "空格应结束组字");
+        Check.Equal("ruo", ended[0].RawInput, "结束事件带出完整拼音串");
+        Check.Equal(3, ended[0].Length, "结束事件带出长度");
+        Check.Equal(CompositionEndReason.Committed, ended[0].Reason, "空格算提交");
+
+        tracker.Feed((int)'A', isKeyDown: true, ModifierKeys.None);
+        tracker.Feed(0x08, isKeyDown: true, ModifierKeys.None);
+        Check.Equal(2, ended.Count, "退格退空应结束组字");
+        Check.Equal(string.Empty, ended[1].RawInput, "退格退空后没有残留");
+        Check.Equal(CompositionEndReason.Cancelled, ended[1].Reason, "退格算取消");
+
+        tracker.Feed((int)'B', isKeyDown: true, ModifierKeys.None);
+        var versionBefore = tracker.Version;
+        tracker.Reset();
+        Check.Equal(2, ended.Count, "Reset 不触发结束事件");
+        Check.True(tracker.Version > versionBefore, "Reset 递增代次");
+        Check.Equal(string.Empty, tracker.RawInput, "Reset 清空缓冲");
+    }
+
     private static void Run(string name, Action action)
     {
         Console.WriteLine(name);
