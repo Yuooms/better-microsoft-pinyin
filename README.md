@@ -96,7 +96,7 @@
 
 ### 使用发布版
 
-到 [Releases](https://github.com/Yuooms/better-microsoft-pinyin/releases) 下载 `BetterMicrosoftPinyin-v0.1.0-win-x64.zip`，解压到任意目录，运行 `BetterMicrosoftPinyin.exe`。压缩包里自带 .NET 运行时，不用另外安装。
+到 [Releases](https://github.com/Yuooms/better-microsoft-pinyin/releases) 下载最新的 `BetterMicrosoftPinyin-v*-win-x64.zip`，解压到任意目录，运行 `BetterMicrosoftPinyin.exe`。压缩包里自带 .NET 运行时，不用另外安装。
 
 ### 从源码构建
 
