@@ -9,6 +9,14 @@
     <InvariantGlobalization>false</InvariantGlobalization>
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
+    <!--
+      输出路径统一到 bin/<配置>/，不要把平台名拼进去。
+      解决方案里的平台映射是 x64，而用 dotnet run 指定单个项目时用的是 AnyCPU，
+      两者默认会分别落在 bin/x64/Debug 与 bin/Debug，看起来像两份产物。
+      本项目只有一个目标平台（PlatformTarget 固定 x64），拼平台名没有意义，
+      而且 dotnet run 只在 bin/Debug 下找产物，路径不一致时它会直接报找不到文件。
+    -->
+    <AppendPlatformToOutputPath>false</AppendPlatformToOutputPath>
     <Product>Better Microsoft Pinyin</Product>
     <Company>Yuooms</Company>
     <Copyright>Copyright (c) 2026 Yuooms</Copyright>

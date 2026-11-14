@@ -23,6 +23,23 @@ dotnet run --project src/BetterPinyin.App
 
 首次运行会打开设置窗口。之后常驻托盘，双击托盘图标可再次打开设置。
 
+### 构建产物都在哪
+
+| 路径 | 是什么 |
+|---|---|
+| `src/<项目>/bin/Debug/net8.0-windows/` | 日常调试构建，框架依赖（要装 .NET 8 桌面运行时），带 `.pdb` |
+| `src/<项目>/bin/Release/net8.0-windows/` | Release 构建，同样是框架依赖 |
+| `src/BetterPinyin.App/bin/Release/net8.0-windows/win-x64/` | `dotnet publish` 的中间产物（自包含，约 174 MB），每次发布都会重新生成，随时可删 |
+| `publish/v<版本>/` | 真正的发布目录，`zip_release.py` 就是从这里打包 |
+
+`Directory.Build.props` 里设了 `AppendPlatformToOutputPath=false`：本项目只有 x64
+一个目标平台，但解决方案映射出的是 `x64`、单项目构建（`dotnet run`）用的是 `AnyCPU`，
+不关掉这个开关会同时长出 `bin/x64/Debug` 和 `bin/Debug` 两份产物，而 `dotnet run`
+只认后者，会出现「明明刚编译过却找不到 exe」。
+
+`bin/`、`obj/` 都在 `.gitignore` 里，删掉不影响任何东西，下次构建会重新生成；
+`publish/` 下只有 zip 是要发出去的成品，别误删。
+
 ## 测试
 
 ```bash
