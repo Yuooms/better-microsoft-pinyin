@@ -116,10 +116,10 @@ dotnet run --project tools/ImeProbe -- --activate-app --send-keys=09,09,09,09,73
 
 ### 测试检查更新
 
-更新走的是「和 GitHub 上最新正式版比大小」，本机发布版通常就是最新版，所以默认看到的是「已是最新版本」。要验证「发现新版本」这条分支，临时把 `Directory.Build.props` 的 `<Version>` 调低（例如 `0.0.9`）再构建：
+更新走的是「和 GitHub 上最新正式版比大小」，本机发布版通常就是最新版，所以默认看到的是「已是最新版本」。要验证「发现新版本」这条分支，临时把 `Directory.Build.props` 的 `<Version>` 调低（例如当前是 `0.2.0`，就填 `0.1.9`）再构建：
 
 ```bash
-# 改成 0.0.9 后重新构建，此时 GitHub 上的 v0.1.0 就成了「新版本」
+# 改低后重新构建，此时 GitHub 上的 v0.2.0 就成了「新版本」
 dotnet build -c Debug
 dotnet run --project src/BetterPinyin.App -- --page=关于
 # 验完记得把版本号改回 Directory.Build.props 里 tag 对应的值

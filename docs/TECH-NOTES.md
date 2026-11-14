@@ -226,7 +226,7 @@ dictionaries[0] = new ResourceDictionary { Source = new Uri("Themes/Colors.Dark.
 
 因此设置窗口**已经放弃自研亚克力**，改用 WPF-UI 的 `FluentWindow`：
 Win10 上是普通不透明窗口（`WindowBackdropType=None`），拖动走 DWM 的常规优化；
-Win11 若要 Mica，把该属性改成 `Mica` 即可，不需要 `Backdrop.cs`。
+后来设置窗口的 Mica 就是在这条路线上做的，开关在「外观 → 窗口材质」，实现与坑见第二十二节。
 
 `Backdrop.cs` 仍保留给候选浮窗：它只覆盖一个小窗口、不需要拖动，
 `ACCENT_ENABLE_ACRYLICBLURBEHIND` 的逐帧代价可以接受；且浮窗是无焦点窗口，
