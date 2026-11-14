@@ -77,6 +77,16 @@ public sealed class UiaCandidateWindowReader
         (0, -22), (0, -34),
     };
 
+    /// <summary>
+    /// 网格搜索的步长（物理像素）。候选条高度通常 30~40，24 的步长不会整块漏掉。
+    /// </summary>
+    private const int ScanStride = 24;
+
+    /// <summary>
+    /// 网格搜索在窗口下方多探的像素：输入框贴着窗口底部时，候选条会整个落到窗口外面。
+    /// </summary>
+    private const int ScanMarginBottom = 120;
+
     private readonly UiaWorker _worker;
     private readonly Dictionary<uint, string> _processNameCache = new();
     private readonly object _cacheLock = new();
@@ -93,6 +103,15 @@ public sealed class UiaCandidateWindowReader
 
     /// <summary>最近一次 UIA 读取的诊断信息。</summary>
     public static string LastDiagnostic { get; private set; } = "(尚未读取)";
+
+    /// <summary>
+    /// 最近一次 <see cref="ReadBest"/> 命中的候选窗句柄；没命中时为 <see cref="IntPtr.Zero"/>。
+    /// </summary>
+    /// <remarks>
+    /// 调用方需要这个句柄来判断「候选窗有没有消失」（上屏前确认组字真的被取消），
+    /// 而候选窗不一定在锚点附近（鼠标兜底时是网格搜出来的），所以只能由读取器回报。
+    /// </remarks>
+    public IntPtr LastHandle { get; private set; }
 
     /// <summary>UIA 是否已成功初始化。</summary>
     public bool IsAvailable { get; private set; }
@@ -197,18 +216,31 @@ public sealed class UiaCandidateWindowReader
     /// <param name="anchor">锚点（屏幕坐标）。</param>
     /// <param name="timeoutMilliseconds">总等待上限。</param>
     /// <returns>候选窗快照；找不到时返回 <see cref="CandidateWindowSnapshot.Empty"/>。</returns>
+    /// <remarks>
+    /// 锚点来自系统插入符时，候选条必定在它附近；但 Chromium / Electron 这类自绘文本控件
+    /// 没有系统插入符，调用方会退到鼠标位置，而鼠标通常离输入框很远（用户点进输入框后就移开了），
+    /// 按偏移量探测必然落空。所以这种情况下再补一次前台窗口范围内的网格搜索：
+    /// 候选条一定在输入框附近，扫一遍就能找到，代价只有几百次 <c>WindowFromPoint</c>。
+    /// </remarks>
     public CandidateWindowSnapshot ReadBest(AnchorPoint anchor, int timeoutMilliseconds = 400)
     {
         var deadline = Environment.TickCount64 + timeoutMilliseconds;
+        LastHandle = IntPtr.Zero;
 
         do
         {
             var handle = LocateNear(anchor);
+            if (handle == IntPtr.Zero && anchor.Source == AnchorSource.Mouse)
+            {
+                handle = LocateInForegroundWindow();
+            }
+
             if (handle != IntPtr.Zero)
             {
                 var snapshot = Read(handle);
                 if (snapshot.IsVisible)
                 {
+                    LastHandle = handle;
                     return snapshot;
                 }
             }
@@ -218,6 +250,50 @@ public sealed class UiaCandidateWindowReader
         while (Environment.TickCount64 < deadline);
 
         return CandidateWindowSnapshot.Empty;
+    }
+
+    /// <summary>
+    /// 在前台窗口（含下方一段）范围内按网格找候选窗。
+    /// </summary>
+    /// <returns>候选窗句柄；未命中返回 <see cref="IntPtr.Zero"/>。</returns>
+    /// <remarks>
+    /// 只在前台窗口里扫：候选条由输入法贴在插入符下方，而插入符属于前台窗口。
+    /// 下方留出余量是因为输入框贴着窗口底部时，候选条会整个落到窗口外面。
+    /// </remarks>
+    public IntPtr LocateInForegroundWindow()
+    {
+        var foreground = NativeMethods.GetForegroundWindow();
+        if (foreground == IntPtr.Zero || !NativeMethods.GetWindowRect(foreground, out var rect))
+        {
+            return IntPtr.Zero;
+        }
+
+        var bottom = rect.Bottom + ScanMarginBottom;
+        var seen = new HashSet<IntPtr>();
+
+        for (var y = rect.Top; y <= bottom; y += ScanStride)
+        {
+            for (var x = rect.Left; x <= rect.Right; x += ScanStride)
+            {
+                var handle = WindowAt(x, y);
+
+                // 同一根候选条会被很多个采样点命中，去重后再逐个读，避免重复的 UIA 往返。
+                if (handle != IntPtr.Zero && IsPlausibleCandidateWindow(handle))
+                {
+                    seen.Add(handle);
+                }
+            }
+        }
+
+        foreach (var handle in seen)
+        {
+            if (Read(handle).IsVisible)
+            {
+                return handle;
+            }
+        }
+
+        return IntPtr.Zero;
     }
 
     /// <summary>在锚点附近按坐标命中候选窗。</summary>

@@ -253,19 +253,10 @@ internal static class SelfTest
         AnchorPoint anchor,
         TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
-        while (DateTime.UtcNow < deadline)
-        {
-            var handle = reader.LocateNear(anchor);
-            if (handle != IntPtr.Zero)
-            {
-                return handle;
-            }
-
-            Thread.Sleep(80);
-        }
-
-        return IntPtr.Zero;
+        // 用 ReadBest 而不是 LocateNear：这样探针走的就是产品里的真实查找路径，
+        // 包括「锚点来自鼠标时在前台窗口里补一次网格搜索」那条兜底。
+        var snapshot = reader.ReadBest(anchor, (int)Math.Max(80, timeout.TotalMilliseconds));
+        return snapshot.IsVisible ? reader.LastHandle : IntPtr.Zero;
     }
 
     private static void DumpImeWindowCandidates(UiaCandidateWindowReader reader)

@@ -104,6 +104,18 @@ dotnet run --project tools/ImeProbe -- --focus=BetterMicrosoftPinyin --drag=940,
 dotnet run --project tools/ImeProbe -- --focus=BetterMicrosoftPinyin --wheel=600,500,-360,2
 ```
 
+怀疑「某些程序里不联想」时，先看锚点是怎么来的：
+
+```bash
+# 打印前台窗口有没有系统插入符、云联想最后的锚点来源
+dotnet run --project tools/ImeProbe -- --focus=QQ --caret
+```
+
+Chromium / Electron 这类自绘文本控件没有系统插入符，输出会是「没有系统插入符 →
+锚点会退回鼠标位置」，来源 `Mouse`；记事本这类原生控件是 `SystemCaret`。
+两者的差别决定了候选窗是按「插入符附近」还是「鼠标附近」去命中，详见
+[技术笔记第二十三节](TECH-NOTES.md)。
+
 坐标会受缩放与窗口位置影响。更可靠的做法是先用 UIA 拿控件的物理坐标：
 
 ```bash

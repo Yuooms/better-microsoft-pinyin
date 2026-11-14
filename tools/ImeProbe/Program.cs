@@ -378,6 +378,11 @@ internal static class Program
             return HandleLayoutCommands(args, _uiaWorker);
         }
 
+        if (args.Any(a => a.Equals("--caret", StringComparison.OrdinalIgnoreCase)))
+        {
+            return DumpCaret(args);
+        }
+
         if (args.Any(a => a.Equals("--self-test", StringComparison.OrdinalIgnoreCase)) ||
             args.Any(a => a.Equals("--hit-test", StringComparison.OrdinalIgnoreCase)))
         {
@@ -757,6 +762,54 @@ internal static class Program
 
         Console.WriteLine($"[截图] {path}（{width}x{height}）");
         worker.Dispose();
+        return 0;
+    }
+
+    /// <summary>
+    /// 打印前台窗口的插入符情况，用来判断云联想的锚点会不会降级到鼠标。
+    /// </summary>
+    /// <param name="args">命令行参数，可带 <c>--focus=窗口名</c> 先把目标切到前台。</param>
+    /// <returns>进程退出码。</returns>
+    /// <remarks>
+    /// Chromium / Electron 这类自绘文本控件没有系统插入符，<see cref="CaretLocator"/>
+    /// 会退回鼠标位置；候选窗却是按坐标在锚点附近命中的，锚点一旦不在插入符上，
+    /// 候选条就找不到，上层只能判定「不是可联想的输入状态」。这条命令把降级过程摊开来看。
+    /// </remarks>
+    private static int DumpCaret(string[] args)
+    {
+        var focusArg = args.FirstOrDefault(a =>
+            a.StartsWith("--focus=", StringComparison.OrdinalIgnoreCase));
+        if (focusArg is not null)
+        {
+            var handle = TargetWindow.Activate(focusArg["--focus=".Length..]);
+            if (handle == IntPtr.Zero)
+            {
+                Console.WriteLine("[caret] 找不到目标窗口");
+                return 1;
+            }
+
+            // 前台切换与输入法状态都有延迟，等一拍再读。
+            Thread.Sleep(400);
+        }
+
+        var foreground = NativeMethods.GetForegroundWindow();
+        var title = new StringBuilder(256);
+        NativeMethods.GetWindowText(foreground, title, title.Capacity);
+        Console.WriteLine($"[caret] 前台 0x{foreground:X} \"{title}\" 类名 {NativeMethods.GetWindowClassName(foreground)}");
+
+        var caret = CaretLocator.TryGetForegroundCaret();
+        Console.WriteLine(caret is null
+            ? "[caret] 没有系统插入符 → 锚点会退回鼠标位置"
+            : $"[caret] 系统插入符 ({caret.Value.X},{caret.Value.Y})");
+
+        var anchor = CaretLocator.GetAnchor();
+        Console.WriteLine($"[caret] 实际锚点 ({anchor.X},{anchor.Y}) 来源 {anchor.Source}");
+
+        if (NativeMethods.GetCursorPos(out var cursor))
+        {
+            Console.WriteLine($"[caret] 鼠标位置 ({cursor.X},{cursor.Y})");
+        }
+
         return 0;
     }
 

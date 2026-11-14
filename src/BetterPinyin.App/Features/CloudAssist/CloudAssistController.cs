@@ -546,7 +546,7 @@ internal sealed class CloudAssistController : IDisposable
         _currentMode = mode;
         _currentForeground = NativeMethods.GetForegroundWindow();
         _currentCaret = anchorPoint;
-        _candidateHandle = snapshot.IsVisible ? AppServices.Reader.LocateNear(anchorPoint) : IntPtr.Zero;
+        _candidateHandle = snapshot.IsVisible ? AppServices.Reader.LastHandle : IntPtr.Zero;
 
         Volatile.Write(ref _map, map);
 
