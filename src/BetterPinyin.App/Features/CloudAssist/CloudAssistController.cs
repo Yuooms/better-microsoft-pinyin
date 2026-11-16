@@ -75,6 +75,40 @@ internal sealed class CloudAssistController : IDisposable
     private PinyinMatcher _matcher;
     private CancellationTokenSource? _debounceSource;
 
+    /// <summary>上一次按键时的前台窗口，用来发现「用户换了个窗口」。</summary>
+    private IntPtr _lastForeground;
+
+    /// <summary>最近一次按键的时间戳（<see cref="Environment.TickCount64"/>）。</summary>
+    private long _lastKeystrokeTick;
+
+    /// <summary>最近一次看到候选窗时的窗口句柄，用来判断组字是不是已经结束。</summary>
+    private IntPtr _lastCandidateHandle;
+
+    /// <summary>组字看门狗：按键收不到结束通知时，靠它发现组字已经结束了。</summary>
+    private Timer? _compositionWatch;
+
+    /// <summary>看门狗重入保护：上一个 tick 还没跑完就不再进来。</summary>
+    private int _watchdogBusy;
+
+    /// <summary>候选窗已消失时，用户停手多久就认定这次组字结束。</summary>
+    /// <remarks>留出一点余量：连续打字时候选窗会有正常的重绘间隙，不能一看到不可见就收摊。</remarks>
+    private const int CandidateGoneIdleMs = 700;
+
+    /// <summary>下一个按键进来时，停手多久才值得验一次「上一段组字是不是已经没了」。</summary>
+    /// <remarks>
+    /// 鼠标点候选通常发生在停手之后，所以这个值要明显小于人类的选词耗时；
+    /// 又要大于连续打字的键间隔，否则每打一个字都会白验一次。
+    /// </remarks>
+    private const int StaleCheckIdleMs = 300;
+
+    /// <summary>完全看不到候选窗时的兜底时限。</summary>
+    /// <remarks>
+    /// 有些界面（任务栏搜索框之类的自绘控件）我们读不到候选窗，句柄一直是 0，
+    /// 那就没有任何判据能证明组字还活着。此时只靠时间兜底：宁可丢掉一段「用户其实
+    /// 还在打、只是停下来想了很久」的组字，也不能让残留拼音一直拼到后面的输入上。
+    /// </remarks>
+    private const int UnobservableIdleMs = 5000;
+
     private ActivationMap _map = ActivationMap.Empty;
     private SuggestionSet? _current;
     private IntPtr _candidateHandle;
@@ -154,6 +188,7 @@ internal sealed class CloudAssistController : IDisposable
         }
 
         IsRunning = true;
+        _compositionWatch = new Timer(OnCompositionWatch, null, 250, 250);
         Report("已启动，等待输入");
     }
 
@@ -165,8 +200,12 @@ internal sealed class CloudAssistController : IDisposable
         _tracker.CompositionEnded -= OnCompositionEnded;
         _hub.Release("cloud-assist");
 
+        _compositionWatch?.Dispose();
+        _compositionWatch = null;
+
         CancelPendingQuery();
         Clear();
+        ForgetCandidateWindow();
         IsRunning = false;
     }
 
@@ -191,6 +230,7 @@ internal sealed class CloudAssistController : IDisposable
         CancelPendingQuery();
         _tracker.Reset();
         Clear();
+        ForgetCandidateWindow();
     }
 
     /// <inheritdoc />
@@ -219,6 +259,27 @@ internal sealed class CloudAssistController : IDisposable
         {
             return;
         }
+
+        // 先验一眼「上一段组字是不是已经结束了」。键盘钩子看不到鼠标选词、输入法自动上屏、
+        // 点别的控件这些结束方式，残留的拼音就会被拼到这一次输入上，查出「上一次 + 这一次」。
+        // 两种判据：换了前台窗口（输入法一定在焦点变化时结束组字）；或者停手一小会儿之后
+        // 候选窗已经不可见。放在最前面：被吞掉的采纳键、提交窗口内的键也要先过这一关。
+        var activeWindow = NativeMethods.GetForegroundWindow();
+
+        if (activeWindow != _lastForeground)
+        {
+            _lastForeground = activeWindow;
+            DropStaleComposition("换了前台窗口", CompositionEndReason.FocusLost);
+        }
+        else if (Environment.TickCount64 - Volatile.Read(ref _lastKeystrokeTick) >= StaleCheckIdleMs &&
+                 IsCompositionGone())
+        {
+            // 停手超过 StaleCheckIdleMs 才验：连续打字时候选窗会有正常的重绘间隙，
+            // 每按一个键都去验一次既不必要，也可能把正在进行的组字切断。
+            DropStaleComposition("候选窗已消失", CompositionEndReason.Unknown);
+        }
+
+        Volatile.Write(ref _lastKeystrokeTick, Environment.TickCount64);
 
         if (!e.IsKeyDown)
         {
@@ -353,7 +414,11 @@ internal sealed class CloudAssistController : IDisposable
         _ = DebouncedQueryAsync(e.RawInput, e.Version, source.Token);
     }
 
-    private void OnCompositionEnded(object? sender, CompositionEndedEventArgs e) => Clear();
+    private void OnCompositionEnded(object? sender, CompositionEndedEventArgs e)
+    {
+        Clear();
+        ForgetCandidateWindow();
+    }
 
     private async Task DebouncedQueryAsync(string raw, long version, CancellationToken cancellationToken)
     {
@@ -393,10 +458,27 @@ internal sealed class CloudAssistController : IDisposable
                 return;
             }
 
+            // 记下这次看到的候选窗：看门狗要靠它判断组字有没有结束。
+            var previousHandle = Volatile.Read(ref _lastCandidateHandle);
+            Volatile.Write(
+                ref _lastCandidateHandle,
+                snapshot.IsVisible ? AppServices.Reader.LastHandle : IntPtr.Zero);
+
             var mode = InputModeResolver.Resolve(snapshot, raw, _settings);
             if (mode == InputMode.None)
             {
-                Report($"{raw}：当前不是可联想的输入状态");
+                Report(
+                    $"{raw}：当前不是可联想的输入状态" +
+                    $"（锚点={anchorPoint.Source}，候选窗={(snapshot.IsVisible ? "可见" : "未找到")}，" +
+                    $"{UiaCandidateWindowReader.LastDiagnostic}）");
+
+                // 上一次查询还看得见候选窗、这次看不见了：那一段组字已经结束，
+                // 只是没有任何按键通知我们。留着缓冲只会把拼音拼到下一次输入上。
+                if (previousHandle != IntPtr.Zero)
+                {
+                    _tracker.NotifyCompositionLost(CompositionEndReason.Unknown);
+                }
+
                 Clear();
                 return;
             }
@@ -1083,6 +1165,125 @@ internal sealed class CloudAssistController : IDisposable
 
         _current = null;
         SuggestionsCleared?.Invoke(this, EventArgs.Empty);
+    }
+
+    /// <summary>
+    /// 忘掉上次读到的候选窗句柄。
+    /// </summary>
+    /// <remarks>
+    /// 只能在确认组字已经结束时调用。浮窗消失（没有候选可展示）不代表组字结束，
+    /// 那种情况下句柄要留着，否则鼠标选词那一下就没有判据了。
+    /// </remarks>
+    private void ForgetCandidateWindow() => Volatile.Write(ref _lastCandidateHandle, IntPtr.Zero);
+
+    /// <summary>组字是否已经结束但没人告诉我们（候选窗看得见→现在看不见了）。</summary>
+    /// <returns>已经结束返回 true。</returns>
+    private bool IsCompositionGone()
+    {
+        if (!_tracker.IsComposing)
+        {
+            return false;
+        }
+
+        var handle = Volatile.Read(ref _lastCandidateHandle);
+
+        // 从没读到过候选窗：没有判据，交给看门狗的时间兜底，不要在这里猜。
+        return handle != IntPtr.Zero && !NativeMethods.IsWindowVisible(handle);
+    }
+
+    /// <summary>丢掉一段已经结束、但我们没收到结束通知的组字。</summary>
+    /// <param name="reason">诊断用的原因。</param>
+    /// <param name="endReason">记入统计的结束原因。</param>
+    /// <remarks>日志里只写长度，不写拼音串——日志不记录用户输入内容。</remarks>
+    private void DropStaleComposition(string reason, CompositionEndReason endReason)
+    {
+        if (_tracker.IsComposing)
+        {
+            Log.Write($"[云联想] 结束残留组字（{reason}，长度 {_tracker.PendingLength}）");
+            _tracker.NotifyCompositionLost(endReason);
+        }
+
+        Clear();
+    }
+
+    /// <summary>
+    /// 定时检查候选窗是否已经消失；消失了就结束这次组字。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 键盘钩子只能看到按键。用户用鼠标点候选、点别的窗口、或者输入法自己上屏时，
+    /// 我们收不到任何通知，重建出来的拼音串就会一直挂着——下一次输入被拼成
+    /// 「上一次 + 这一次」，查出来的词自然全是错的。
+    /// </para>
+    /// <para>
+    /// 三个判据：组字窗口不再是前台（立刻收摊）；见过候选窗的看它还在不在
+    /// （<see cref="CandidateGoneIdleMs"/>）；从没见过的（读不到候选窗的界面）只能等
+    /// <see cref="UnobservableIdleMs"/> 兜底。后者保证「再读不到也最多残留 5 秒」，
+    /// 不会一路合并下去。后两条都不在用户打字过程中触发：连续输入时不可能停手这么久。
+    /// </para>
+    /// </remarks>
+    private void OnCompositionWatch(object? state)
+    {
+        if (Interlocked.Exchange(ref _watchdogBusy, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            // 停用/释放之后定时器可能还有一次回调在跑：它不能再动事件订阅方。
+            if (_disposed || !_tracker.IsComposing)
+            {
+                return;
+            }
+
+            var idle = Environment.TickCount64 - Volatile.Read(ref _lastKeystrokeTick);
+            var handle = Volatile.Read(ref _lastCandidateHandle);
+
+            // 组字所在窗口已经不是前台：输入法在焦点离开时就把组字结束了。
+            // 这条不看停手时间——用户点了别的窗口，浮窗和拼音串都该立刻收摊。
+            if (NativeMethods.GetForegroundWindow() != Volatile.Read(ref _lastForeground))
+            {
+                DropStaleComposition("组字窗口已不在前台", CompositionEndReason.FocusLost);
+                return;
+            }
+
+            if (handle == IntPtr.Zero)
+            {
+                if (idle < UnobservableIdleMs)
+                {
+                    return;
+                }
+            }
+            else
+            {
+                if (idle < CandidateGoneIdleMs)
+                {
+                    return;
+                }
+
+                // 候选窗还在就说明组字没结束（用户只是在思考），什么都不做。
+                if (NativeMethods.IsWindowVisible(handle))
+                {
+                    return;
+                }
+            }
+
+            Log.Write($"[云联想] 组字看门狗：停手 {idle}ms，" +
+                      $"{(handle == IntPtr.Zero ? "始终没读到候选窗" : "候选窗已消失")}");
+            DropStaleComposition(
+                handle == IntPtr.Zero ? "组字长时间无法观察" : "候选窗已消失",
+                CompositionEndReason.Unknown);
+        }
+        catch (Exception ex)
+        {
+            // 看门狗自己不能把程序带崩：它跑在线程池上，异常会直接结束进程。
+            Log.Write($"[云联想] 组字看门狗异常：{ex.GetType().Name} {ex.Message}");
+        }
+        finally
+        {
+            Volatile.Write(ref _watchdogBusy, 0);
+        }
     }
 
     private void Report(string message)

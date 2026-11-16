@@ -235,6 +235,21 @@ public sealed class StatisticsAggregator
         }
     }
 
+    /// <summary>组字结束，但去向未知。</summary>
+    /// <remarks>
+    /// 鼠标点候选、输入法自己上屏都收不到按键通知，我们只知道这段组字结束了。
+    /// 这种情况两个计数都不加：把正常上屏算成「放弃」会冤枉用户，
+    /// 算成「上屏」又可能在用户真的取消时虚高。
+    /// </remarks>
+    public void DiscardComposition()
+    {
+        lock (_gate)
+        {
+            _composing = false;
+            _lastLength = 0;
+        }
+    }
+
     /// <summary>云候选上屏成功。</summary>
     /// <param name="text">上屏的文本；只用于取长度，不会被保存。</param>
     public void AddCloudAccept(string? text)

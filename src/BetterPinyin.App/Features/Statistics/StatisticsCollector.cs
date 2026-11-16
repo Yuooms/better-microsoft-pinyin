@@ -159,7 +159,23 @@ internal sealed class StatisticsCollector : IDisposable
 
     private void OnCompositionEnded(object? sender, CompositionEndedEventArgs e)
     {
-        _aggregator.EndComposition(e.Reason == CompositionEndReason.Committed);
+        switch (e.Reason)
+        {
+            case CompositionEndReason.Committed:
+                _aggregator.EndComposition(committed: true);
+                break;
+
+            case CompositionEndReason.Cancelled:
+            case CompositionEndReason.FocusLost:
+                _aggregator.EndComposition(committed: false);
+                break;
+
+            default:
+                // 候选窗自己消失，判断不了是上屏还是放弃，两个计数都不动。
+                _aggregator.DiscardComposition();
+                break;
+        }
+
         _lastLength = 0;
         _onChanged?.Invoke();
     }

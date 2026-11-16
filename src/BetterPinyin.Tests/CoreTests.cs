@@ -228,6 +228,25 @@ internal static class CoreTests
         Check.False(json.Contains("若娜瓦"), "统计文件里不应出现输入内容");
         Check.True(json.Contains("CloudCharacters"), "文件里应只有计数字段");
 
+        // 去向未知（鼠标点候选 / 输入法自己上屏）：两个计数都不该动。
+        // 以前这种结束收不到通知，现在由看门狗补上，所以必须确认它不会污染「放弃」。
+        var beforeDiscard = aggregator.Snapshot().Last().Totals;
+        aggregator.BeginComposition("Code");
+        aggregator.AddLetters(2);
+        aggregator.DiscardComposition();
+        var afterDiscard = aggregator.Snapshot().Last().Totals;
+        Check.Equal(beforeDiscard.Committed, afterDiscard.Committed, "去向未知不算提交");
+        Check.Equal(beforeDiscard.Cancelled, afterDiscard.Cancelled, "去向未知不算取消");
+        Check.Equal(beforeDiscard.Letters + 2, afterDiscard.Letters, "字母照样算进去");
+
+        // 丢弃之后再开新的一段：字母不接着上一段累加，提交正常记。
+        aggregator.BeginComposition("Code");
+        aggregator.AddLetters(1);
+        aggregator.EndComposition(committed: true);
+        var afterNew = aggregator.Snapshot().Last().Totals;
+        Check.Equal(beforeDiscard.Committed + 1, afterNew.Committed, "新一段正常记提交");
+        Check.Equal(beforeDiscard.Letters + 3, afterNew.Letters, "新一段字母独立累加");
+
         // 防抖落盘也必须按保留期裁剪：用户从不打开设置页时，
         // 如果只有手动保存才裁剪，文件会一年年长下去。
         var retentionPath = Path.Combine(Path.GetTempPath(), "bp-stats-" + Guid.NewGuid().ToString("N") + ".json");
@@ -304,6 +323,41 @@ internal static class CoreTests
         Check.Equal(2, ended.Count, "Reset 不触发结束事件");
         Check.True(tracker.Version > versionBefore, "Reset 递增代次");
         Check.Equal(string.Empty, tracker.RawInput, "Reset 清空缓冲");
+
+        // Tab 在微软拼音里是定稿，不加这一条就会把「打一半 + 切走」的串带到下一次输入。
+        tracker.Feed((int)'C', isKeyDown: true, ModifierKeys.None);
+        tracker.Feed((int)'D', isKeyDown: true, ModifierKeys.None);
+        tracker.Feed(0x09, isKeyDown: true, ModifierKeys.None);
+        Check.Equal(3, ended.Count, "Tab 应结束组字");
+        Check.Equal("cd", ended[2].RawInput, "Tab 结束事件带出拼音串");
+
+        // 外部观察到候选窗消失时走这条路径：必须能清空，且不重复触发。
+        tracker.Feed((int)'E', isKeyDown: true, ModifierKeys.None);
+        tracker.NotifyCompositionLost(CompositionEndReason.FocusLost);
+        Check.Equal(4, ended.Count, "候选窗消失应结束组字");
+        Check.Equal(CompositionEndReason.FocusLost, ended[3].Reason, "结束原因应透传");
+        tracker.NotifyCompositionLost(CompositionEndReason.FocusLost);
+        Check.Equal(4, ended.Count, "没在组字时不应重复结束");
+
+        // 中文逗号 / 句号上屏：虚拟键码是 0xBC / 0xBE，不是 ASCII 的 0x2C / 0x2E。
+        // 这一段曾经漏判，导致标点上屏后拼音串一直挂着，合并到下一次输入。
+        tracker.Feed((int)'F', isKeyDown: true, ModifierKeys.None);
+        tracker.Feed(0xBC, isKeyDown: true, ModifierKeys.None);
+        Check.Equal(5, ended.Count, "逗号应结束组字");
+        Check.Equal("f", ended[4].RawInput, "逗号是定稿上屏");
+        Check.Equal(CompositionEndReason.Committed, ended[4].Reason, "逗号算提交");
+
+        tracker.Feed((int)'G', isKeyDown: true, ModifierKeys.None);
+        tracker.Feed(0xBE, isKeyDown: true, ModifierKeys.None);
+        Check.Equal(6, ended.Count, "句号应结束组字");
+        Check.Equal(CompositionEndReason.Committed, ended[5].Reason, "句号算提交");
+
+        // 方向键只在候选列表里挪选中项，不能算结束。
+        tracker.Feed((int)'H', isKeyDown: true, ModifierKeys.None);
+        tracker.Feed(0x25, isKeyDown: true, ModifierKeys.None);
+        tracker.Feed(0x28, isKeyDown: true, ModifierKeys.None);
+        Check.Equal(6, ended.Count, "方向键不应结束组字");
+        Check.Equal("h", tracker.RawInput, "方向键后拼音串仍在");
     }
 
     /// <summary>版本检查：Release 解析、版本比较与替换脚本。</summary>

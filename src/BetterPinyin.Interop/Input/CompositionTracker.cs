@@ -198,6 +198,7 @@ public sealed class CompositionTracker
 
             case 0x20: // Space
             case 0x0D: // Enter
+            case 0x09: // Tab
                 End(CompositionEndReason.Committed);
                 break;
 
@@ -209,9 +210,17 @@ public sealed class CompositionTracker
                 End(CompositionEndReason.Committed);
                 break;
 
+            case 0x25: // Left
+            case 0x26: // Up
+            case 0x27: // Right
+            case 0x28: // Down
+                // 方向键是在候选列表里挪选中项，组字并没有结束。
+                // 早先把它当成「可打印键」结束组字，翻候选时浮窗就会莫名消失。
+                break;
+
             default:
                 // 其余可打印键（标点、符号）都会让输入法定稿当前组字。
-                if (virtualKey is >= 0x21 and <= 0x2F or >= 0x3A and <= 0x40 or >= 0x5B and <= 0x60 or >= 0x6B and <= 0x6F)
+                if (IsCommitPunctuation(virtualKey))
                 {
                     End(CompositionEndReason.Committed);
                 }
@@ -219,6 +228,18 @@ public sealed class CompositionTracker
                 break;
         }
     }
+
+    /// <summary>这个键是不是会让输入法定稿的标点 / 符号键。</summary>
+    /// <param name="virtualKey">虚拟键码。</param>
+    /// <returns>是返回 true。</returns>
+    /// <remarks>
+    /// 必须用虚拟键码而不是 ASCII：美式键盘上 <c>; = , - . / `</c> 是 0xBA~0xC0，
+    /// <c>[ \ ] '</c> 是 0xDB~0xDE，数字小键盘是 0x60~0x6F。
+    /// 以前拿 ASCII 的 0x2C / 0x2E 去比，中文逗号、句号上屏后组字串根本没结束，
+    /// 下一次输入就被拼成「上一次 + 这一次」——这正是「拼音残留并合并」的主因。
+    /// </remarks>
+    private static bool IsCommitPunctuation(int virtualKey) =>
+        virtualKey is (>= 0x60 and <= 0x6F) or (>= 0xBA and <= 0xC0) or (>= 0xDB and <= 0xDE);
 
     private void Append(char c)
     {
