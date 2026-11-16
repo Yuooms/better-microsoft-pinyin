@@ -28,7 +28,13 @@ public partial class App : Application
 {
     private const string SingleInstanceMutexName = @"Local\BetterMicrosoftPinyin.SingleInstance";
 
+    /// <summary>已经在运行的实例用它来接收「把设置窗口打开」的请求。</summary>
+    private const string ActivateEventName = @"Local\BetterMicrosoftPinyin.Activate";
+
     private Mutex? _singleInstanceMutex;
+    private EventWaitHandle? _activateRequest;
+    private CancellationTokenSource? _activateLoop;
+    private Thread? _activateThread;
     private TrayIcon? _trayIcon;
     private CloudAssistFeature? _cloudAssist;
     private StatisticsFeature? _statistics;
@@ -47,11 +53,18 @@ public partial class App : Application
         {
             if (!AcquireSingleInstance())
             {
-                MessageBox.Show(
-                    "Better 微软拼音已经在运行，请在系统托盘中打开设置。",
-                    "Better 微软拼音",
-                    MessageBoxButton.OK,
-                    MessageBoxImage.Information);
+                // 已经在运行：直接把那个实例的设置窗口叫到前台。
+                // 比弹一句「请到系统托盘中打开」有用得多——托盘图标经常被折叠进溢出区，
+                // 用户双击程序本来就是想看设置。
+                if (!SignalRunningInstance())
+                {
+                    MessageBox.Show(
+                        "Better 微软拼音已经在运行，请在系统托盘中打开设置。",
+                        "Better 微软拼音",
+                        MessageBoxButton.OK,
+                        MessageBoxImage.Information);
+                }
+
                 Shutdown();
                 return;
             }
@@ -64,6 +77,9 @@ public partial class App : Application
             AppDomain.CurrentDomain.ProcessExit += (_, _) => Log.Shutdown(500);
 
             Log.Write("程序启动");
+
+            // 第二次双击时由这个通道把设置窗口叫到前台，见 SignalRunningInstance。
+            StartActivationListener();
 
             AppServices.Initialize();
             Log.Write($"设置已加载：{AppServices.Store.FilePath}；UIA 可用={AppServices.UiaAvailable}");
@@ -117,14 +133,15 @@ public partial class App : Application
             // 更新检查同样放到后台：网络慢的时候不能挡住设置窗口出现。
             ScheduleUpdateCheck();
 
-            // 首次运行（还没有配置文件）直接把设置打开，避免用户以为程序没启动。
-            // --settings 便于开发时直接进设置页核对界面；--page=外观 可直达某一页。
+            // --page=外观 可直达某一页，--settings 只是「现在就打开设置」的显式写法。
             _startupPage = e.Args
                 .FirstOrDefault(arg => arg.StartsWith("--page=", StringComparison.OrdinalIgnoreCase))
                 ?["--page=".Length..];
 
-            // 开机启动时不弹设置窗口：正常启动本来就只驻留托盘，
-            // 但首次运行（还没有配置文件）默认会打开设置，自启动必须跳过这一条。
+            // 手动启动（双击 exe、开始菜单、命令行）一律把设置窗口打开：托盘图标常被
+            // 折叠进溢出区，不弹窗口用户会以为程序根本没启动。
+            // 只有开机自启动（--autostart）静默驻留托盘。提权重启带的是 --replace，
+            // 属于用户主动操作，同样要显示。
             var launchedByStartup = e.Args.Any(
                 arg => arg.Equals("--autostart", StringComparison.OrdinalIgnoreCase));
 
@@ -133,7 +150,7 @@ public partial class App : Application
                 .FirstOrDefault(arg => arg.StartsWith("--ui-shot=", StringComparison.OrdinalIgnoreCase))
                 ?["--ui-shot=".Length..];
 
-            if ((!File.Exists(AppServices.Store.FilePath) && !launchedByStartup) ||
+            if (!launchedByStartup ||
                 e.Args.Any(arg => arg.Equals("--settings", StringComparison.OrdinalIgnoreCase)) ||
                 _startupPage is not null ||
                 _uiShotPath is not null)
@@ -178,6 +195,7 @@ public partial class App : Application
         finally
         {
             SystemTheme.Stop();
+            StopActivationListener();
 
             _singleInstanceMutex?.ReleaseMutex();
             _singleInstanceMutex?.Dispose();
@@ -404,14 +422,23 @@ public partial class App : Application
 
         while (true)
         {
-            _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var createdNew);
-            if (createdNew)
+            try
             {
-                return true;
-            }
+                _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var createdNew);
+                if (createdNew)
+                {
+                    return true;
+                }
 
-            _singleInstanceMutex.Dispose();
-            _singleInstanceMutex = null;
+                _singleInstanceMutex.Dispose();
+                _singleInstanceMutex = null;
+            }
+            catch (UnauthorizedAccessException)
+            {
+                // 已存在的互斥量是更高权限的实例创建的，连打开都被拒。
+                // 这种情况同样说明「已经有一个在运行」，交给调用方去唤起它的窗口。
+                return false;
+            }
 
             if (Environment.TickCount64 >= deadline)
             {
@@ -420,6 +447,107 @@ public partial class App : Application
 
             Thread.Sleep(120);
         }
+    }
+
+    /// <summary>
+    /// 开一条通道，让第二次启动的实例能把已经打开的设置窗口叫到前台。
+    /// </summary>
+    /// <remarks>
+    /// 用命名事件而不是窗口消息：两边的权限级别可能不同（一个是管理员、一个不是），
+    /// 命名内核对象只要有同名同用户的 DACL 就能跨级别使用，而 <c>FindWindow</c> +
+    /// <c>PostMessage</c> 会被 UIPI 拦掉。
+    /// </remarks>
+    private void StartActivationListener()
+    {
+        try
+        {
+            _activateRequest = new EventWaitHandle(
+                initialState: false,
+                EventResetMode.AutoReset,
+                ActivateEventName);
+            _activateLoop = new CancellationTokenSource();
+
+            _activateThread = new Thread(() =>
+            {
+                while (true)
+                {
+                    try
+                    {
+                        // WaitOne 不能被取消，用短超时轮询：退出时最多多等半秒。
+                        if (!_activateRequest.WaitOne(500))
+                        {
+                            continue;
+                        }
+                    }
+                    catch (ObjectDisposedException)
+                    {
+                        return;
+                    }
+
+                    if (_activateLoop.IsCancellationRequested)
+                    {
+                        return;
+                    }
+
+                    Dispatcher.InvokeAsync(() => ShowSettings());
+                }
+            })
+            {
+                IsBackground = true,
+                Name = "单实例激活",
+            };
+
+            _activateThread.Start();
+        }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or WaitHandleCannotBeOpenedException)
+        {
+            // 拿不到通道只影响「再次双击时唤起窗口」，不影响程序本身。
+            Log.Write($"单实例激活通道创建失败：{ex.Message}");
+        }
+    }
+
+    private void StopActivationListener()
+    {
+        _activateLoop?.Cancel();
+        _activateThread?.Join(1000);
+
+        _activateRequest?.Dispose();
+        _activateRequest = null;
+
+        _activateLoop?.Dispose();
+        _activateLoop = null;
+        _activateThread = null;
+    }
+
+    /// <summary>
+    /// 通知正在运行的实例把设置窗口打开。
+    /// </summary>
+    /// <returns>通知成功返回 true。</returns>
+    /// <remarks>
+    /// 第一个实例要先建互斥量再建这条通道，双击得太快时可能还打不开，
+    /// 所以重试几次；仍然失败就退回对话框提示。
+    /// </remarks>
+    private static bool SignalRunningInstance()
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                using var signal = EventWaitHandle.OpenExisting(ActivateEventName);
+                signal.Set();
+                return true;
+            }
+            catch (WaitHandleCannotBeOpenedException)
+            {
+                Thread.Sleep(150);
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
+            {
+                return false;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

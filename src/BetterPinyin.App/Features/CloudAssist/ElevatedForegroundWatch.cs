@@ -18,7 +18,7 @@ internal sealed class ElevatedAppEventArgs : EventArgs
         Level = level;
     }
 
-    /// <summary>前台进程名，例如 <c>WorkBuddy</c>。</summary>
+    /// <summary>前台进程名，例如 <c>notepad</c>。</summary>
     public string ProcessName { get; }
 
     /// <summary>该进程的完整性级别。</summary>
