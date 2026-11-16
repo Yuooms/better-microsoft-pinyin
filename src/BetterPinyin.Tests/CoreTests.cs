@@ -619,6 +619,71 @@ internal static class CoreTests
         Check.True(book.Learn("此花亭奇谭", chtqt, "chtqt", out var learned), "还原后的全拼应能进词库");
         Check.Equal("chtqt", learned.Initials, "词条声母串与用户敲的一致");
         Check.Equal("chtqt", PhraseVariants.InitialsOf(chtqt), "写入自定义短语的简拼与输入一致");
+
+        // 整包备份：短语存 JSON、自学习存原始字节，导回来必须一模一样。
+        var bundleDir = Path.Combine(Path.GetTempPath(), $"bp-bundle-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(bundleDir);
+        try
+        {
+            var bundlePath = Path.Combine(bundleDir, "backup.zip");
+            var learnedRaw = new byte[] { 0x55, 0xAA, 0x88, 0x81, 1, 2, 3, 4 };
+            var payload = new[]
+            {
+                new MspyPhrase("yisitalu", 2, "伊斯塔露"),
+                new MspyPhrase("ystl", 2, "伊斯塔露"),
+            };
+
+            Check.True(
+                MspyBackupBundle.TryWrite(bundlePath, payload, learnedRaw, 42, DateTimeOffset.Now, out var writeError),
+                $"整包备份应能写出：{writeError}");
+            Check.True(MspyBackupBundle.TryRead(bundlePath, out var bundle, out var bundleError), $"应能读回：{bundleError}");
+            Check.Equal(2, bundle.Phrases.Count, "短语条数往返");
+            Check.Equal("yisitalu", bundle.Phrases[0].Pinyin, "拼音往返");
+            Check.Equal(2, bundle.Phrases[0].Position, "位置往返");
+            Check.Equal("伊斯塔露", bundle.Phrases[0].Text, "短语往返");
+            Check.Equal(42, bundle.LearnedWordCount, "自学习条数写进清单");
+            Check.True(bundle.LearnedData is not null && bundle.LearnedData.SequenceEqual(learnedRaw), "自学习按字节往返");
+            Check.Equal(MspyBackupBundle.FormatVersion, bundle.Version, "格式版本");
+
+            // 没装过输入法（没有自学习文件）时也要能导出。
+            var phrasesOnly = Path.Combine(bundleDir, "phrases-only.zip");
+            Check.True(
+                MspyBackupBundle.TryWrite(phrasesOnly, payload, null, 0, DateTimeOffset.Now, out _),
+                "只有短语也能导出");
+            Check.True(MspyBackupBundle.TryRead(phrasesOnly, out var noLearning, out _), "只有短语的备份应能读回");
+            Check.True(noLearning.LearnedData is null, "没有自学习时不给字节");
+
+            // 空备份导入没有意义，读的时候就要拒绝，别让用户以为「导入成功了」。
+            var emptyBundle = Path.Combine(bundleDir, "empty.zip");
+            Check.True(
+                MspyBackupBundle.TryWrite(emptyBundle, Array.Empty<MspyPhrase>(), null, 0, DateTimeOffset.Now, out _),
+                "空备份也能写出");
+            Check.False(MspyBackupBundle.TryRead(emptyBundle, out _, out var emptyError), "空备份应被拒绝");
+            Check.True(emptyError is not null, "空备份要说明原因");
+
+            // 陌生 zip 与坏文件都要被认出来，别拿别的东西去覆盖用户的数据。
+            var stranger = Path.Combine(bundleDir, "stranger.zip");
+            using (var zip = System.IO.Compression.ZipFile.Open(
+                       stranger,
+                       System.IO.Compression.ZipArchiveMode.Create))
+            {
+                zip.CreateEntry("readme.txt");
+            }
+
+            Check.False(MspyBackupBundle.TryRead(stranger, out _, out var strangerError), "陌生 zip 应被拒绝");
+            Check.True(strangerError is not null, "拒绝时要说清原因");
+
+            var notZip = Path.Combine(bundleDir, "not-a-zip.zip");
+            File.WriteAllText(notZip, "这不是压缩包");
+            Check.False(MspyBackupBundle.TryRead(notZip, out _, out _), "坏文件应被拒绝");
+        }
+        finally
+        {
+            if (Directory.Exists(bundleDir))
+            {
+                Directory.Delete(bundleDir, recursive: true);
+            }
+        }
     }
 
     private static void Catalog()

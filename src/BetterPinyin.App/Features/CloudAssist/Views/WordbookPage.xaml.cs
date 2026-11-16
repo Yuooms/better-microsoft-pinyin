@@ -763,4 +763,109 @@ public partial class WordbookPage : Page
     /// <summary>拼音只允许小写字母，与输入法的触发码一致。</summary>
     private static bool IsValidPinyin(string value) =>
         value.Length is > 0 and <= 64 && value.All(c => c is >= 'a' and <= 'z');
+
+    // ── 整包备份 ──────────────────────────────────────────────
+
+    /// <summary>把结果写到当前可见标签的状态行：备份按钮是两个标签共用的。</summary>
+    private void SetStatus(string message)
+    {
+        if (LearningView.Visibility == Visibility.Visible)
+        {
+            LearningStatusText.Text = message;
+        }
+        else
+        {
+            StatusText.Text = message;
+        }
+    }
+
+    private void OnExportAllClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new SaveFileDialog
+        {
+            Title = "导出全部（自定义短语 + 自学习）",
+            Filter = "备份文件 (*.zip)|*.zip|所有文件 (*.*)|*.*",
+            FileName = MspyBackupBundle.SuggestedFileName(DateTimeOffset.Now),
+            DefaultExt = ".zip",
+            AddExtension = true,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        var result = AppServices.ExportBackup(dialog.FileName);
+        SetStatus(result.Error is not null
+            ? $"导出失败：{result.Error}"
+            : $"已导出：自定义短语 {result.Phrases} 条、自学习 {result.LearnedWords} 条"
+              + $"（{FormatSize(result.Bytes)}）→ {dialog.FileName}");
+    }
+
+    private void OnImportAllClick(object sender, RoutedEventArgs e)
+    {
+        var dialog = new OpenFileDialog
+        {
+            Title = "导入全部备份",
+            Filter = "备份文件 (*.zip)|*.zip|所有文件 (*.*)|*.*",
+            CheckFileExists = true,
+        };
+
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+
+        // 先解析一遍：既确认是本程序的备份，也让用户看清会覆盖什么。
+        if (!MspyBackupBundle.TryRead(dialog.FileName, out var preview, out var error))
+        {
+            SetStatus($"这不是可用的备份文件：{error}");
+            return;
+        }
+
+        var hasLearning = preview.LearnedData is { Length: > 0 };
+        var message = $"备份内容：自定义短语 {preview.Phrases.Count} 条"
+                      + (hasLearning ? $"，自学习词库 {preview.LearnedWordCount} 条。" : "，不含自学习词库。")
+                      + "\n\n导入后：短语按触发码并入（同码以备份为准）；"
+                      + (hasLearning
+                          ? "自学习词库整份替换当前词库，替换前会自动备份当前状态。"
+                          : "不动自学习词库。")
+                      + "\n\n继续？";
+
+        if (!Confirm(message, "导入全部备份"))
+        {
+            return;
+        }
+
+        var result = AppServices.ImportBackup(dialog.FileName, GetWindowHandle());
+        Reload();
+        LoadLearning();
+
+        if (result.Error is not null)
+        {
+            SetStatus($"导入失败：{result.Error}");
+            return;
+        }
+
+        var summary = $"已导入：短语新增 {result.Added} 条、覆盖 {result.Replaced} 条";
+        if (result.LearnedRestored > 0)
+        {
+            summary += $"，自学习 {result.LearnedRestored} 条（{result.ReloadMessage}）";
+        }
+
+        if (result.Warning is not null)
+        {
+            summary += $"；{result.Warning}";
+        }
+
+        SetStatus(summary);
+    }
+
+    private static string FormatSize(long bytes) => bytes switch
+    {
+        <= 0 => "0 B",
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:0.#} KB",
+        _ => $"{bytes / (1024.0 * 1024.0):0.#} MB",
+    };
 }

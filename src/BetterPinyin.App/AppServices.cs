@@ -521,6 +521,190 @@ internal static class AppServices
         return new LearnedRestoreResult(restored, reloaded, reloadMessage, null);
     }
 
+    /// <summary>整包备份的导出结果。</summary>
+    /// <param name="Phrases">写进备份的短语条数。</param>
+    /// <param name="LearnedWords">写进备份的自学习词条数。</param>
+    /// <param name="Bytes">备份文件大小。</param>
+    /// <param name="Error">失败原因；成功为 null。</param>
+    public sealed record BackupExportResult(int Phrases, int LearnedWords, long Bytes, string? Error);
+
+    /// <summary>整包备份的导入结果。</summary>
+    /// <param name="Added">新增的短语条数。</param>
+    /// <param name="Replaced">按触发码覆盖掉的短语条数。</param>
+    /// <param name="LearnedRestored">恢复的自学习词条数。</param>
+    /// <param name="Reloaded">输入法是否已重新加载自学习词库。</param>
+    /// <param name="ReloadMessage">重新加载的说明或失败原因。</param>
+    /// <param name="Error">整体失败的原因；成功为 null。</param>
+    /// <param name="Warning">短语已写入、但自学习没恢复时的说明。</param>
+    public sealed record BackupImportResult(
+        int Added,
+        int Replaced,
+        int LearnedRestored,
+        bool Reloaded,
+        string ReloadMessage,
+        string? Error,
+        string? Warning);
+
+    /// <summary>
+    /// 把自定义短语与自学习词库打成一个备份文件。
+    /// </summary>
+    /// <param name="path">目标文件。</param>
+    /// <returns>导出结果。</returns>
+    /// <remarks>
+    /// 自学习词库按**字节**整份带走，不做逐条转换：它的拼音索引指向输入法的内部音节表，
+    /// 本程序解不出来也写不回去，只有原样搬运才能保证导回来和导出时一模一样。
+    /// </remarks>
+    public static BackupExportResult ExportBackup(string path)
+    {
+        var phrases = Phrases.Read(out var readError);
+        if (readError is not null)
+        {
+            return new BackupExportResult(0, 0, 0, $"读取自定义短语失败：{readError}");
+        }
+
+        byte[]? learned = null;
+        var learnedCount = 0;
+        if (Learning.Exists)
+        {
+            if (!Learning.TryReadRaw(out var raw, out var learningError))
+            {
+                return new BackupExportResult(0, 0, 0, $"读取自学习词库失败：{learningError}");
+            }
+
+            learned = raw;
+            learnedCount = Learning.TryRead(out var words, out _) ? words.Count : 0;
+        }
+
+        if (phrases.Count == 0 && learned is null)
+        {
+            // 空文件照样写出来只会让用户以为「已经备份好了」。
+            return new BackupExportResult(0, 0, 0, "没有可导出的数据：自定义短语与自学习词库都是空的。");
+        }
+
+        if (!MspyBackupBundle.TryWrite(path, phrases, learned, learnedCount, DateTimeOffset.Now, out var error))
+        {
+            return new BackupExportResult(0, 0, 0, error);
+        }
+
+        var bytes = 0L;
+        try
+        {
+            bytes = new FileInfo(path).Length;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 只是用来显示大小，读不到就算了。
+        }
+
+        Log.Write($"整包备份已导出：短语 {phrases.Count} 条 / 自学习 {learnedCount} 条 → {path}");
+        return new BackupExportResult(phrases.Count, learnedCount, bytes, null);
+    }
+
+    /// <summary>
+    /// 导入一份整包备份：短语按触发码并入，自学习词库整份替换。
+    /// </summary>
+    /// <param name="path">备份文件。</param>
+    /// <param name="window">借用的输入法上下文窗口，用于恢复自学习后让输入法重读。</param>
+    /// <returns>导入结果。</returns>
+    /// <remarks>
+    /// 两边规则不同是数据本身决定的：短语能按条合并，所以「同触发码以备份为准、其余保留」；
+    /// 自学习只能整份替换，替换前会自动把当前状态备份到 udl-backup，所以这一步也能撤。
+    /// </remarks>
+    public static BackupImportResult ImportBackup(string path, IntPtr window)
+    {
+        if (!MspyBackupBundle.TryRead(path, out var bundle, out var error))
+        {
+            return new BackupImportResult(0, 0, 0, false, string.Empty, error, null);
+        }
+
+        var existing = Phrases.Read(out var readError);
+        if (readError is not null)
+        {
+            return new BackupImportResult(0, 0, 0, false, string.Empty, $"读取当前短语失败：{readError}", null);
+        }
+
+        var current = new Dictionary<string, MspyPhrase>(StringComparer.OrdinalIgnoreCase);
+        foreach (var phrase in existing)
+        {
+            current[phrase.Pinyin] = phrase;
+        }
+
+        var added = 0;
+        var replaced = 0;
+        foreach (var phrase in bundle.Phrases)
+        {
+            if (current.TryGetValue(phrase.Pinyin, out var found))
+            {
+                if (!string.Equals(found.Text, phrase.Text, StringComparison.Ordinal))
+                {
+                    replaced++;
+                }
+            }
+            else
+            {
+                added++;
+            }
+        }
+
+        if (added + replaced > 0 &&
+            !Phrases.Merge(bundle.Phrases, overwriteOthers: true, out _))
+        {
+            return new BackupImportResult(0, 0, 0, false, string.Empty, $"写入自定义短语失败：{Phrases.LastError}", null);
+        }
+
+        var restored = 0;
+        var reloaded = false;
+        var reloadMessage = string.Empty;
+        string? warning = null;
+
+        if (bundle.LearnedData is { Length: > 0 })
+        {
+            if (!Learning.Exists)
+            {
+                // 没装过微软拼音（或从没用它打过字）时没有这个文件，恢复无从谈起。
+                warning = "本机还没有自学习词库文件，跳过了自学习部分（用输入法打几次字后会生成）。";
+            }
+            else
+            {
+                var temp = Path.Combine(Path.GetTempPath(), $"bp-bundle-{Guid.NewGuid():N}.dat");
+                try
+                {
+                    File.WriteAllBytes(temp, bundle.LearnedData);
+                    var result = RestoreLearnedBackup(temp, window);
+                    if (result.Error is not null)
+                    {
+                        warning = $"自学习词库未恢复：{result.Error}";
+                    }
+                    else
+                    {
+                        restored = result.Restored;
+                        reloaded = result.Reloaded;
+                        reloadMessage = result.ReloadMessage;
+                    }
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    warning = $"自学习词库未恢复：{ex.Message}";
+                }
+                finally
+                {
+                    try
+                    {
+                        File.Delete(temp);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        // 临时文件留在 %TEMP% 里也无害。
+                    }
+                }
+            }
+        }
+
+        Log.Write($"整包备份已导入：短语 +{added} / 覆盖 {replaced}，自学习 {restored} 条" +
+                  (warning is null ? string.Empty : $"（{warning}）"));
+        return new BackupImportResult(added, replaced, restored, reloaded, reloadMessage, null, warning);
+    }
+
     /// <summary>释放 UIA 线程，并把用户词库的挂起改动落盘。</summary>
     public static void Shutdown()
     {

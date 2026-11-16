@@ -184,6 +184,18 @@ public sealed class MspyLearningStore
     }
 
     /// <summary>
+    /// 读出整份文件的原始字节，用于整包备份。
+    /// </summary>
+    /// <param name="data">文件内容；失败时为空数组。</param>
+    /// <param name="error">失败原因；成功为 null。</param>
+    /// <returns>读取成功返回 true。</returns>
+    /// <remarks>
+    /// 逐条导出会丢掉拼音索引与条目指纹（本程序解不出来的字段），只有原样存一份字节，
+    /// 恢复后才能和输入法自己写出来的文件一模一样。
+    /// </remarks>
+    public bool TryReadRaw(out byte[] data, out string? error) => TryReadBytes(FilePath, out data, out error);
+
+    /// <summary>
     /// 读取指定 UDL 文件（可以是备份）里的全部有效条目。
     /// </summary>
     /// <param name="path">文件路径。</param>
