@@ -38,17 +38,14 @@ public sealed class BingSuggestionClient : ICloudSuggestionProvider
     /// <inheritdoc />
     public string Id => "bing";
 
-    /// <summary>最近一次查询命中的端点标识，用于诊断展示。</summary>
-    public string? LastEndpointId { get; private set; }
-
     /// <inheritdoc />
-    public async Task<IReadOnlyList<string>> GetSuggestionsAsync(
+    public async Task<CloudProviderAnswer> QueryAsync(
         string query,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(query))
         {
-            return Array.Empty<string>();
+            return CloudProviderAnswer.Empty(Id);
         }
 
         foreach (var endpoint in _endpoints)
@@ -58,13 +55,13 @@ public sealed class BingSuggestionClient : ICloudSuggestionProvider
             var result = await TryQueryAsync(endpoint, query, cancellationToken).ConfigureAwait(false);
             if (result.Count > 0)
             {
-                LastEndpointId = endpoint.Id;
-                return result;
+                // 端点 id 用局部变量带出去：它只属于这一次查询，不放进字段，
+                // 否则双源并发时同一个客户端会被别的查询覆盖。
+                return new CloudProviderAnswer(result, endpoint.Id);
             }
         }
 
-        LastEndpointId = null;
-        return Array.Empty<string>();
+        return CloudProviderAnswer.Empty(Id);
     }
 
     private async Task<IReadOnlyList<string>> TryQueryAsync(

@@ -40,6 +40,16 @@ public sealed class AppSettings
     public bool StrictDedupeLocal { get; set; } = true;
 
     /// <summary>
+    /// 云联想（严格槽）的词源：<c>bing</c> 或 <c>sogou</c>。
+    /// </summary>
+    /// <remarks>
+    /// 只影响严格槽，扩展云联想固定用 Bing。
+    /// 取值由 <see cref="Cloud.CloudSourceCatalog.Normalize"/> 归一化：老配置没有这个键、
+    /// 或值非法时都按 <c>bing</c> 处理，因此不需要迁移代码。
+    /// </remarks>
+    public string StrictProvider { get; set; } = Cloud.CloudSourceCatalog.DefaultId;
+
+    /// <summary>
     /// 是否启用「扩展云联想」（输入是前缀的更长词）。
     /// </summary>
     /// <remarks>

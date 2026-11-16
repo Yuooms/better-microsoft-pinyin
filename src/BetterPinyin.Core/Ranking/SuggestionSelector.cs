@@ -223,6 +223,46 @@ public static class SuggestionSelector
         return new SuggestionSet(strict, extended, localCandidateCount, localCountKnown, diagnostic);
     }
 
+    /// <summary>
+    /// 合并两次分区结果：严格槽取前者，扩展槽取后者。
+    /// </summary>
+    /// <param name="strictSource">提供严格槽的分区结果。</param>
+    /// <param name="extendedSource">提供扩展槽的分区结果。</param>
+    /// <returns>可直接展示的合并结果。</returns>
+    /// <remarks>
+    /// 双源模式下两个槽分别来自不同词源，各自只调用了一次 <see cref="Select"/>，
+    /// 因此这里要自己去重（两次调用之间没有共享「严格槽已占用」的信息）。
+    /// 诊断文案重新拼，避免出现「扩展=关闭；扩展=2」这种自相矛盾的拼接。
+    /// </remarks>
+    public static SuggestionSet Combine(SuggestionSet strictSource, SuggestionSet extendedSource)
+    {
+        var strict = strictSource.Strict;
+        var extended = new List<CloudSuggestion>(extendedSource.Extended.Count);
+
+        foreach (var item in extendedSource.Extended)
+        {
+            if (strict is not null && string.Equals(item.Text, strict.Text, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            if (extended.Exists(e => string.Equals(e.Text, item.Text, StringComparison.Ordinal)))
+            {
+                continue;
+            }
+
+            extended.Add(item);
+        }
+
+        var localCount = strictSource.LocalCandidateCount >= 0
+            ? strictSource.LocalCandidateCount
+            : extendedSource.LocalCandidateCount;
+        var localKnown = strictSource.LocalCountKnown || extendedSource.LocalCountKnown;
+        var diagnostic = $"严格={strict?.Text ?? "无"}；扩展={extended.Count}；本地={localCount}";
+
+        return new SuggestionSet(strict, extended, localCount, localKnown, diagnostic);
+    }
+
     /// <summary>用户词库来源标识。</summary>
     public const string WordbookProviderId = "wordbook";
 

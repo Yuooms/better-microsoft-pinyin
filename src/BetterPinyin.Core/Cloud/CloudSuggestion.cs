@@ -22,6 +22,27 @@ public sealed record CloudSuggestion(
 }
 
 /// <summary>
+/// 一次词源查询的结果。
+/// </summary>
+/// <param name="Items">原始候选文本，已按来源相关度排序；失败时为空列表。</param>
+/// <param name="SourceId">
+/// 本次真正生效的来源标识。Bing 会带上命中的端点（如 <c>bing-osjson</c>），
+/// 搜狗固定为 <c>sogou</c>。
+/// </param>
+/// <remarks>
+/// 来源随结果一起返回，而不是放进客户端的可写属性：
+/// 双源模式下同一个客户端可能被并发调用，共享字段会互相覆盖。
+/// </remarks>
+public sealed record CloudProviderAnswer(IReadOnlyList<string> Items, string SourceId)
+{
+    /// <summary>构造一个空结果。</summary>
+    /// <param name="sourceId">来源标识。</param>
+    /// <returns>候选为空的查询结果。</returns>
+    public static CloudProviderAnswer Empty(string sourceId) =>
+        new(Array.Empty<string>(), sourceId);
+}
+
+/// <summary>
 /// 云联想词源。
 /// </summary>
 /// <remarks>
@@ -38,6 +59,6 @@ public interface ICloudSuggestionProvider
     /// </summary>
     /// <param name="query">输入串（通常是用户敲的拼音）。</param>
     /// <param name="cancellationToken">取消令牌；用户继续打字时应立即取消上一次查询。</param>
-    /// <returns>原始候选文本，已按来源相关度排序；失败时返回空列表而不是抛异常。</returns>
-    Task<IReadOnlyList<string>> GetSuggestionsAsync(string query, CancellationToken cancellationToken);
+    /// <returns>原始候选文本与本次生效的来源；失败时返回空结果而不是抛异常。</returns>
+    Task<CloudProviderAnswer> QueryAsync(string query, CancellationToken cancellationToken);
 }
