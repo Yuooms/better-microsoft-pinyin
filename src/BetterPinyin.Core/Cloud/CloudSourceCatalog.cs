@@ -30,4 +30,10 @@ public static class CloudSourceCatalog
     /// </remarks>
     public static string Normalize(string? id) =>
         string.Equals(id, SogouId, StringComparison.OrdinalIgnoreCase) ? SogouId : BingId;
+
+    /// <summary>来源的显示名，用于设置页与诊断。</summary>
+    /// <param name="id">来源 id。</param>
+    /// <returns>中文显示名。</returns>
+    public static string DisplayName(string? id) =>
+        Normalize(id) == SogouId ? "搜狗" : "必应 Bing";
 }

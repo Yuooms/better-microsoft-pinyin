@@ -5,6 +5,7 @@ using System.Text;
 using BetterPinyin.Core.Cloud;
 using BetterPinyin.Core.Cloud.Sogou;
 using BetterPinyin.Core.Lexicon;
+using BetterPinyin.Core.Network;
 using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Ranking;
 using BetterPinyin.Core.Wordbook;
@@ -273,6 +274,16 @@ internal static class Program
             {
                 Console.WriteLine($"    {query,-22} 请求失败：{ex.GetType().Name} {ex.Message}");
             }
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("  端点体检（网络与环境页同款）：");
+        var probe = new EndpointProbe(httpClient);
+        foreach (var result in await probe.ProbeAllAsync(timeoutMilliseconds: 2500).ConfigureAwait(false))
+        {
+            Console.WriteLine(
+                $"    {result.DisplayName,-42} {(result.Reachable ? "可用" : "不可用")}  " +
+                $"{result.LatencyMilliseconds,4}ms  {result.ResultCount,2} 条  {result.Error}");
         }
     }
 }

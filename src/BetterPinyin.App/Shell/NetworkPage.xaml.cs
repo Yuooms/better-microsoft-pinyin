@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using BetterPinyin.Core.Cloud;
 using BetterPinyin.Core.Network;
 using BetterPinyin.Interop.Ime;
 
@@ -55,6 +56,7 @@ public partial class NetworkPage : Page
     {
         SettingsPanel.Children.Clear();
 
+        AddInfoText($"云联想来源：{CloudSourceCatalog.DisplayName(AppServices.Settings.StrictProvider)}（扩展云联想固定 Bing）");
         AddInfoText($"端点策略：{AppServices.Settings.EndpointMode}（自动模式下按体检结果依次尝试）");
         AddInfoText($"代理：{AppServices.Settings.ProxyMode}");
         AddInfoText($"请求超时：{AppServices.Settings.RequestTimeoutMs} 毫秒");
@@ -83,18 +85,18 @@ public partial class NetworkPage : Page
             foreach (var result in results)
             {
                 AddRowToEndpointPanel(
-                    $"{result.Endpoint.Host}{result.Endpoint.Path}",
+                    result.DisplayName,
                     result.Reachable,
                     result.Reachable
                         ? $"{result.LatencyMilliseconds} 毫秒，{result.ResultCount} 条结果" +
-                          (result.Endpoint.HasContentFilter ? "（有内容过滤）" : string.Empty)
+                          (result.HasContentFilter ? "（有内容过滤）" : string.Empty)
                         : $"不可用：{result.Error}");
             }
 
             var usable = results.Count(r => r.Reachable);
             ProbeStatusText.Text = usable == 0
-                ? "全部端点不可用：请检查网络，或在云联想页确认是否需要代理"
-                : $"可用端点 {usable} / {results.Count}，程序会按此顺序自动尝试";
+                ? "全部来源不可用：请检查网络，或在云联想页确认是否需要代理"
+                : $"可用 {usable} / {results.Count}；Bing 端点按耗时依次降级，搜狗独立";
         }
         catch (Exception ex)
         {
