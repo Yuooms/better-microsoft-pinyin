@@ -4,6 +4,7 @@ using System.Windows.Media;
 using BetterPinyin.App.Shell;
 using BetterPinyin.Contracts;
 using BetterPinyin.Core.Settings;
+using BetterPinyin.Interop.Ime;
 using BetterPinyin.Interop.Windowing;
 
 namespace BetterPinyin.App.Features.CloudAssist;
@@ -111,7 +112,8 @@ public partial class CloudCandidateWindow : Window
 
         Rows.ItemsSource = rows;
 
-        if (!IsVisible)
+        var wasVisible = IsVisible;
+        if (!wasVisible)
         {
             // ShowActivated=False + WS_EX_NOACTIVATE，Show 不会夺走输入焦点。
             Show();
@@ -120,6 +122,79 @@ public partial class CloudCandidateWindow : Window
         // 让布局立即完成，否则 ActualWidth/Height 还是 0，位置会算错。
         UpdateLayout();
         Position(snapshot, englishMode ? "Below" : settings.OverlayPlacement);
+
+        var handle = new WindowInteropHelper(this).Handle;
+
+        // 顶层窗口之间也要排 Z 序：别的程序也可能是置顶的（截图工具、录屏条），
+        // 只靠创建时的 Topmost 会被压在下面。每次显示显式提一次，带 NOACTIVATE 不会抢焦点。
+        // 注意这管不了开始菜单 / 搜索面板这类壳层窗口，它们根本不参与普通窗口的 Z 序。
+        NativeMethods.SetWindowPos(
+            handle,
+            NativeMethods.HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+
+        // 「浮窗没出现」最难从现象区分：可能没显示、在屏幕外、或者被别的窗口盖住。
+        // 每段组字只记一次（从隐藏变可见），不然每敲一个字母都写一行，日志很快就滚没了。
+        if (!wasVisible || TraceZOrderEnabled)
+        {
+            var rect = NativeMethods.GetWindowRect(handle, out var bounds)
+                ? $"{bounds.Left},{bounds.Top} {bounds.Right - bounds.Left}x{bounds.Bottom - bounds.Top}"
+                : "(取不到矩形)";
+            var dpi = VisualTreeHelper.GetDpi(this);
+            var hit = TraceZOrderEnabled ? $"，该点命中={DescribeWindowsAt(handle)}" : string.Empty;
+
+            Log.Write(
+                $"[浮窗] 显示：候选窗 {(snapshot.IsVisible ? $"{snapshot.Left},{snapshot.Top} {snapshot.Width}x{snapshot.Height}" : "无")}，" +
+                $"浮窗 {rect}，置顶={Topmost}，布局 {ActualWidth}x{ActualHeight}@{dpi.DpiScaleX:0.##}x{hit}");
+        }
+    }
+
+    /// <summary>是否打印 Z 序诊断（环境变量 <c>BETTERPINYIN_TRACE_Z=1</c>）。</summary>
+    private static bool TraceZOrderEnabled { get; } =
+        Environment.GetEnvironmentVariable("BETTERPINYIN_TRACE_Z") == "1";
+
+    /// <summary>按 Z 序列出覆盖某个屏幕点的顶层窗口（最上面的在前）。</summary>
+    /// <param name="handle">浮窗句柄，用于在结果里标出自己。</param>
+    /// <returns>形如 <c>进程:类名[宽x高]</c> 的描述。</returns>
+    /// <remarks>
+    /// 只列「句柄在谁上面」不够：真正决定看不看得见的是这些窗口的矩形有没有盖住浮窗。
+    /// 取浮窗右上角稍内侧的点来查，命中不了自己的话说明被别的窗口压住了。
+    /// 注意这个方法看不到壳层窗口（开始菜单、搜索面板），它们不参与普通窗口树的枚举。
+    /// </remarks>
+    private static string DescribeWindowsAt(IntPtr handle)
+    {
+        if (!NativeMethods.GetWindowRect(handle, out var self))
+        {
+            return "(取不到矩形)";
+        }
+
+        var x = Math.Min(self.Right - 4, self.Left + 8);
+        var y = Math.Min(self.Bottom - 4, self.Top + 8);
+        var found = new List<string>();
+
+        NativeMethods.EnumWindows(
+            (hwnd, _) =>
+            {
+                if (!NativeMethods.IsWindowVisible(hwnd) ||
+                    !NativeMethods.GetWindowRect(hwnd, out var rect) ||
+                    x < rect.Left || x >= rect.Right || y < rect.Top || y >= rect.Bottom)
+                {
+                    return true;
+                }
+
+                var mark = hwnd == handle ? "*" : string.Empty;
+                found.Add(
+                    $"{mark}{WindowProcess.GetProcessName(hwnd)}:{NativeMethods.GetWindowClassName(hwnd)}" +
+                    $"[{rect.Right - rect.Left}x{rect.Bottom - rect.Top}]");
+                return found.Count < 5;
+            },
+            IntPtr.Zero);
+
+        return found.Count == 0 ? "(无)" : string.Join(" → ", found);
     }
 
     /// <summary>隐藏浮窗。</summary>
@@ -127,6 +202,8 @@ public partial class CloudCandidateWindow : Window
     {
         if (IsVisible)
         {
+            // 和「显示」成对记录，才能看出「显示了但马上又被清掉」这种时序问题。
+            Log.Write("[浮窗] 隐藏");
             Hide();
         }
     }
