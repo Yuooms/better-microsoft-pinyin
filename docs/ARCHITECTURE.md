@@ -50,7 +50,7 @@
   ├─ 简拼展开：无法完整切分时查词库，把 ystl 展开成 yisitalu
   │
   ├─ 云词源（严格槽用所选来源，扩展槽固定 Bing）
-  │     ├→ BingSuggestionClient：qsonhs（api → cn → www）→ 旧 osjson 兜底
+  │     ├→ BingSuggestionClient：qsonhs（api → cn → www）→ 旧 osjson 兜底（限 500ms）
   │     ├→ SogouSuggestionClient：单端点，二进制帧，失败即空
   │     └→ 两条请求并行，返回原始候选文本 + 本次生效的来源
   │

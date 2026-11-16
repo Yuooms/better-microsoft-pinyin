@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -103,7 +104,7 @@ internal static class CoreTests
         Run("[16/19] 搜狗组帧与解帧", Sogou);
         Run("[17/19] 搜狗客户端（桩 HTTP）", SogouClient);
         Run("[18/19] 双源合并", SelectorCombine);
-        Run("[19/19] Bing 端点清单", BingEndpoints);
+        Run("[19/19] Bing 端点与超时", BingEndpoints);
     }
 
     /// <summary>逐组执行，一组崩掉不影响其它组出结论。</summary>
@@ -1440,7 +1441,7 @@ internal static class CoreTests
         Check.Equal(2, merged.Extended.Count, "扩展槽应保留");
     }
 
-    /// <summary>端点清单的护栏：失效端点不得再排到自动降级链的前面。</summary>
+    /// <summary>端点清单的护栏：失效端点不得再排到前面，端点级超时只能收紧。</summary>
     private static void BingEndpoints()
     {
         var endpoints = BingEndpointCatalog.CloudEndpoints;
@@ -1452,20 +1453,74 @@ internal static class CoreTests
         Check.True(
             endpoints.Take(3).All(e => e.Format == BingResponseFormat.SearchBoxJson),
             "前三顺位都应是搜索框格式");
+
+        // 端点级超时只能收紧：末位端点带 500ms，其余沿用全局。
+        var legacy = endpoints[^1];
+        Check.Equal(500, legacy.TimeoutMilliseconds ?? 0, "末位端点应有用 500ms 的收紧超时");
+        Check.True(
+            legacy.ResolveTimeout(1500) == 500,
+            "全局 1500ms 时应压到 500ms");
+        Check.True(
+            legacy.ResolveTimeout(300) == 300,
+            "全局比端点级更短时不得放宽到 500ms");
+        Check.True(
+            endpoints.Take(3).All(e => e.TimeoutMilliseconds is null),
+            "正常端点不该有自己的超时，应跟随设置");
+
+        // 行为验证：慢端点在端点级超时到点后必须放弃，不能拖到全局超时。
+        // 用 400ms 的延迟对比 100ms 的预算，留足 4 倍余量，避免机器繁忙时抖动。
+        const string body =
+            """{"AS":{"Results":[{"Suggests":[{"Txt":"微软件"},{"Txt":"微软"}]}]}}""";
+        var slowEndpoint = new BingEndpoint(
+            "slow-test",
+            "example.invalid",
+            "/suggest",
+            BingResponseFormat.SearchBoxJson,
+            HasContentFilter: false,
+            "测试用慢端点",
+            TimeoutMilliseconds: 100);
+
+        using var slowHttp = new HttpClient(new StubHandler(async (_, token) =>
+        {
+            await Task.Delay(400, token).ConfigureAwait(false);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            };
+        }));
+
+        var slowClient = new BingSuggestionClient(
+            slowHttp,
+            endpoints: new[] { slowEndpoint },
+            timeoutMilliseconds: 1500);
+
+        var watch = Stopwatch.StartNew();
+        var slowAnswer = slowClient.QueryAsync("weiruan", CancellationToken.None).GetAwaiter().GetResult();
+        watch.Stop();
+
+        Check.Equal(0, slowAnswer.Items.Count, "端点级超时到点应返空");
+        Check.True(
+            watch.ElapsedMilliseconds < 1000,
+            $"应按端点级 100ms 截断，实际 {watch.ElapsedMilliseconds}ms");
     }
 
     /// <summary>固定返回预设响应的 HTTP 桩，用来在不联网的情况下验证请求形状。</summary>
     private sealed class StubHandler : HttpMessageHandler
     {
-        private readonly Func<HttpRequestMessage, HttpResponseMessage> _responder;
+        private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _responder;
 
-        public StubHandler(Func<HttpRequestMessage, HttpResponseMessage> responder) =>
+        public StubHandler(Func<HttpRequestMessage, HttpResponseMessage> responder)
+            : this((request, _) => Task.FromResult(responder(request)))
+        {
+        }
+
+        public StubHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responder) =>
             _responder = responder;
 
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request,
             CancellationToken cancellationToken) =>
-            Task.FromResult(_responder(request));
+            _responder(request, cancellationToken);
     }
 
     private static void Expect(

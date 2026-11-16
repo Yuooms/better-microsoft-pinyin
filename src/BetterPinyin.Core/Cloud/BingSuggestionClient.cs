@@ -70,7 +70,8 @@ public sealed class BingSuggestionClient : ICloudSuggestionProvider
         CancellationToken cancellationToken)
     {
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(_timeoutMilliseconds);
+        // 端点级超时只能收紧全局值，具体规则见 BingEndpoint.ResolveTimeout。
+        timeoutSource.CancelAfter(endpoint.ResolveTimeout(_timeoutMilliseconds));
 
         try
         {

@@ -21,14 +21,34 @@ public enum BingResponseFormat
 /// <param name="Format">响应格式，决定用哪个解析器。</param>
 /// <param name="HasContentFilter">该端点是否带内容过滤（会削减弱相关结果，故相对降权）。</param>
 /// <param name="Description">人类可读说明。</param>
+/// <param name="TimeoutMilliseconds">
+/// 端点级超时，null 表示沿用全局设置。只能收紧、不能放宽：
+/// 解析时与全局超时取较小值，避免个别端点把用户设定的上限顶开。
+/// </param>
 public sealed record BingEndpoint(
     string Id,
     string Host,
     string Path,
     BingResponseFormat Format,
     bool HasContentFilter,
-    string Description)
+    string Description,
+    int? TimeoutMilliseconds = null)
 {
+    /// <summary>
+    /// 算出本次请求实际使用的超时。
+    /// </summary>
+    /// <param name="clientTimeoutMilliseconds">全局单次请求超时。</param>
+    /// <returns>端点级超时与全局超时中的较小值。</returns>
+    /// <remarks>
+    /// 取小值是有意的：端点级超时用来给「可疑端点」设一道更紧的闸，
+    /// 不是用来突破用户在设置里定的上限。用户把全局超时调到 300ms，
+    /// 末位端点也不该再赖到 500ms。
+    /// </remarks>
+    public int ResolveTimeout(int clientTimeoutMilliseconds) =>
+        TimeoutMilliseconds is int own && own < clientTimeoutMilliseconds
+            ? own
+            : clientTimeoutMilliseconds;
+
     /// <summary>
     /// 组装请求地址。
     /// </summary>
@@ -93,6 +113,8 @@ public static class BingEndpointCatalog
     /// </summary>
     /// <remarks>
     /// 放在链尾的代价只在"前三个端点全挂"时才会付出；它若恢复，下次查询会自然用上。
+    /// 超时压到 500ms：这一档只在真正断网、前三个端点全超时的时候才会走到，
+    /// 那时用户已经等了三个满超时，再给它完整的 1.5s 只会让人更久看不到候选。
     /// </remarks>
     public static BingEndpoint LegacyOpenSearch { get; } = new(
         "bing-osjson",
@@ -100,7 +122,8 @@ public static class BingEndpointCatalog
         "/osjson.aspx",
         BingResponseFormat.OpenSearchJson,
         HasContentFilter: false,
-        "旧接口，2026-11 起返回 204，仅作最后兜底");
+        "旧接口，2026-11 起返回 204，仅作最后兜底",
+        TimeoutMilliseconds: 500);
 
     /// <summary>
     /// 按优先级排列的全部云端点。

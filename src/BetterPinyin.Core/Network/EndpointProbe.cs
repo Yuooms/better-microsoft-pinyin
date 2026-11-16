@@ -80,8 +80,11 @@ public sealed class EndpointProbe
         CancellationToken cancellationToken = default)
     {
         var name = $"{endpoint.Host}{endpoint.Path}";
+        // 按运行时真正会用的预算来体检：末位端点带 500ms 收紧值，
+        // 若用体检的 2500ms 去测，会测出「可用」而实际早就超时了。
+        var budget = endpoint.ResolveTimeout(timeoutMilliseconds);
         using var timeoutSource = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        timeoutSource.CancelAfter(timeoutMilliseconds);
+        timeoutSource.CancelAfter(budget);
 
         var stopwatch = Stopwatch.StartNew();
         try
@@ -117,7 +120,8 @@ public sealed class EndpointProbe
         {
             stopwatch.Stop();
             return new EndpointProbeResult(
-                endpoint.Id, name, false, (int)stopwatch.ElapsedMilliseconds, 0, "超时", endpoint.HasContentFilter);
+                endpoint.Id, name, false, (int)stopwatch.ElapsedMilliseconds, 0,
+                $"超时（预算 {budget}ms）", endpoint.HasContentFilter);
         }
         catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException)
         {
