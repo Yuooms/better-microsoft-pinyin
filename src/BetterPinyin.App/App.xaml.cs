@@ -108,6 +108,9 @@ public partial class App : Application
                 onExit: Shutdown,
                 initiallyEnabled: AppServices.Settings.CloudAssistEnabled);
 
+            // 用户不一定开着设置页：检测到高权限程序时用气泡告知，点一下直达云联想页。
+            _cloudAssist.ElevatedAppDetected += OnElevatedAppDetected;
+
             // 模块启动不能阻塞 UI 线程，否则第一帧会卡在钩子安装上。
             _ = StartFeaturesAsync();
 
@@ -394,8 +397,54 @@ public partial class App : Application
 
     private bool AcquireSingleInstance()
     {
-        _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var createdNew);
-        return createdNew;
+        // 提权重启时新实例会先于旧实例退出来：给它一段时间等旧实例交还互斥量。
+        var replacing = Environment.GetCommandLineArgs()
+            .Any(arg => arg.Equals(Elevation.ReplaceArgument, StringComparison.OrdinalIgnoreCase));
+        var deadline = replacing ? Environment.TickCount64 + 5000 : 0;
+
+        while (true)
+        {
+            _singleInstanceMutex = new Mutex(initiallyOwned: true, SingleInstanceMutexName, out var createdNew);
+            if (createdNew)
+            {
+                return true;
+            }
+
+            _singleInstanceMutex.Dispose();
+            _singleInstanceMutex = null;
+
+            if (Environment.TickCount64 >= deadline)
+            {
+                return false;
+            }
+
+            Thread.Sleep(120);
+        }
+    }
+
+    /// <summary>
+    /// 前台程序权限更高时提示用户。
+    /// </summary>
+    /// <remarks>
+    /// 这条路径本身不参与联想：它只是把"为什么没反应"说清楚。
+    /// 气泡每次运行对同一个程序只弹一次，避免用户来回切换时反复打扰。
+    /// </remarks>
+    private void OnElevatedAppDetected(object? sender, ElevatedAppEventArgs e)
+    {
+        var detail = e.Level switch
+        {
+            IntegrityLevel.High => "以管理员权限运行",
+            IntegrityLevel.System => "以系统权限运行",
+            _ => "以更高权限运行（读不到具体级别）",
+        };
+
+        Log.Write(
+            $"[云联想] {e.ProcessName} {detail}，Windows 会拦截键盘钩子，无法为它提供联想");
+
+        _trayIcon?.ShowBalloon(
+            "云联想在这个程序里不生效",
+            $"{e.ProcessName} {detail}，Windows 不让低权限程序读取它的按键。点此查看处理方法。",
+            () => ShowSettings("云联想"));
     }
 
     private void OnDispatcherUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e)

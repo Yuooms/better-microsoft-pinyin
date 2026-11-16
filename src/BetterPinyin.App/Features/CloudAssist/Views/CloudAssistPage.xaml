@@ -43,6 +43,44 @@
                               Margin="0,4,0,0"
                               Text="输入拼音时从云端取联想词。云联想严格按字数匹配，来源可在下方切换；扩展云联想补充更长的词，固定用 Bing。两者可独立开关。" />
 
+                <!--
+                    权限提示。前台程序比本程序权限高时，UIPI 会让键盘钩子收不到按键，
+                    表现是"这个程序里完全没反应、日志也没有记录"，不说清楚没人能猜到。
+                    只在检测到时出现，且可关闭；具体成因留给 TROUBLESHOOTING。
+                -->
+                <Border x:Name="ElevatedNotice"
+                        Visibility="Collapsed"
+                        Style="{StaticResource Card}"
+                        BorderBrush="{DynamicResource WarningBrush}"
+                        Background="{DynamicResource SurfaceAltBrush}"
+                        Padding="14,12"
+                        Margin="0,16,0,0">
+                    <StackPanel>
+                        <fl:TextBlock x:Name="ElevatedNoticeTitle"
+                                      FontTypography="BodyStrong"
+                                      TextWrapping="Wrap" />
+                        <fl:TextBlock FontTypography="Caption"
+                                      Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                      TextWrapping="Wrap"
+                                      Margin="0,4,0,0"
+                                      Text="Windows 会拦截权限更低的程序读取它的按键。以管理员身份重启本程序即可支持；开机自启仍按原方式运行。" />
+                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                            <fl:Button Content="以管理员身份重启"
+                                       Appearance="Primary"
+                                       Click="OnRestartElevatedClick" />
+                            <fl:Button Content="忽略"
+                                       Appearance="Secondary"
+                                       Margin="8,0,0,0"
+                                       Click="OnDismissElevatedClick" />
+                            <TextBlock x:Name="ElevatedNoticeStatus"
+                                       VerticalAlignment="Center"
+                                       Margin="12,0,0,0"
+                                       TextWrapping="Wrap"
+                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
                 <!-- 总开关单独一张卡，对应系统设置里的「主开关」 -->
                 <Border Style="{StaticResource Card}" Margin="0,16,0,0">
                     <HeaderedContentControl Style="{StaticResource SettingRow}"

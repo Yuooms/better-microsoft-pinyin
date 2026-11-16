@@ -9,6 +9,8 @@ using BetterPinyin.Core.Network;
 using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Ranking;
 using BetterPinyin.Core.Wordbook;
+using BetterPinyin.Interop.Ime;
+using BetterPinyin.Interop.Windowing;
 
 namespace BetterPinyin.Tests;
 
@@ -50,6 +52,11 @@ internal static class Program
         if (args.Any(a => a.Equals("--sogou", StringComparison.OrdinalIgnoreCase)))
         {
             return await SogouProbeAsync(args).ConfigureAwait(false);
+        }
+
+        if (args.Any(a => a.Equals("--integrity", StringComparison.OrdinalIgnoreCase)))
+        {
+            return IntegrityProbe();
         }
 
         try
@@ -289,5 +296,45 @@ internal static class Program
                 $"    {result.DisplayName,-42} {(result.Reachable ? "可用" : "不可用")}  " +
                 $"{result.LatencyMilliseconds,4}ms  {result.ResultCount,2} 条  {result.Error}");
         }
+    }
+
+    /// <summary>
+    /// 打印本进程与几个典型进程的完整性级别。
+    /// </summary>
+    /// <remarks>
+    /// 用来确认 UIPI 判定是否可靠：本程序能辅助哪些程序，完全取决于这一步读得对不对。
+    /// 判定一旦读错（例如把管理员进程读成普通），界面要么该提示却不提示，要么反过来骚扰用户。
+    /// </remarks>
+    /// <returns>进程退出码。</returns>
+    private static int IntegrityProbe()
+    {
+        var own = ProcessIntegrity.Current;
+        Console.WriteLine($"本进程  PID={Environment.ProcessId,-6} 级别={own}（{ProcessIntegrity.Describe(own)}）");
+        Console.WriteLine();
+
+        var foreground = NativeMethods.GetForegroundWindow();
+        var name = WindowProcess.GetProcessName(foreground) ?? "?";
+        var level = ProcessIntegrity.ForWindow(foreground);
+        Console.WriteLine(
+            $"前台窗口 {name,-16} 级别={level,-8}（{ProcessIntegrity.Describe(level)}）" +
+            $" 高于本进程={ProcessIntegrity.IsAboveSelf(level)}");
+        Console.WriteLine();
+
+        Console.WriteLine("  采样：");
+        foreach (var processName in new[] { "explorer", "WorkBuddy", "msedge", "services" })
+        {
+            var process = Process.GetProcessesByName(processName).FirstOrDefault();
+            if (process is null)
+            {
+                continue;
+            }
+
+            var sample = ProcessIntegrity.ForProcess((uint)process.Id);
+            Console.WriteLine(
+                $"    {processName,-12} pid={process.Id,-6} 级别={sample,-8}" +
+                $"（{ProcessIntegrity.Describe(sample)}） 高于本进程={ProcessIntegrity.IsAboveSelf(sample)}");
+        }
+
+        return 0;
     }
 }

@@ -15,6 +15,7 @@ using BetterPinyin.Core.Updates;
 using BetterPinyin.Core.Wordbook;
 using BetterPinyin.Interop.Input;
 using BetterPinyin.Interop.Startup;
+using BetterPinyin.Interop.Windowing;
 using Microsoft.Win32;
 
 namespace BetterPinyin.Tests;
@@ -86,25 +87,26 @@ internal static class CoreTests
 {
     public static void RunAll()
     {
-        Run("[1/19] Bing 响应解析", Parser);
-        Run("[2/19] 候选清洗", Sanitizer);
-        Run("[3/19] 拼音匹配", Matcher);
-        Run("[4/19] 严格 / 扩展分区", Selector);
-        Run("[5/19] 排序合并（旧链路）", Ranker);
-        Run("[6/19] 设置持久化", Settings);
-        Run("[7/19] 词库词表", Catalog);
-        Run("[8/19] 用户词库", Wordbook);
-        Run("[9/19] 自学习词库", Learning);
-        Run("[10/19] 自学习词库删除", LearningDelete);
-        Run("[11/19] 自学习词库备份", LearningBackup);
-        Run("[12/19] 开机启动登记", StartupRegistrationTest);
-        Run("[13/19] 输入统计", Statistics);
-        Run("[14/19] 组字状态机", CompositionTrackerStates);
-        Run("[15/19] 版本检查与更新脚本", Updates);
-        Run("[16/19] 搜狗组帧与解帧", Sogou);
-        Run("[17/19] 搜狗客户端（桩 HTTP）", SogouClient);
-        Run("[18/19] 双源合并", SelectorCombine);
-        Run("[19/19] Bing 端点与超时", BingEndpoints);
+        Run("[1/20] Bing 响应解析", Parser);
+        Run("[2/20] 候选清洗", Sanitizer);
+        Run("[3/20] 拼音匹配", Matcher);
+        Run("[4/20] 严格 / 扩展分区", Selector);
+        Run("[5/20] 排序合并（旧链路）", Ranker);
+        Run("[6/20] 设置持久化", Settings);
+        Run("[7/20] 词库词表", Catalog);
+        Run("[8/20] 用户词库", Wordbook);
+        Run("[9/20] 自学习词库", Learning);
+        Run("[10/20] 自学习词库删除", LearningDelete);
+        Run("[11/20] 自学习词库备份", LearningBackup);
+        Run("[12/20] 开机启动登记", StartupRegistrationTest);
+        Run("[13/20] 输入统计", Statistics);
+        Run("[14/20] 组字状态机", CompositionTrackerStates);
+        Run("[15/20] 版本检查与更新脚本", Updates);
+        Run("[16/20] 搜狗组帧与解帧", Sogou);
+        Run("[17/20] 搜狗客户端（桩 HTTP）", SogouClient);
+        Run("[18/20] 双源合并", SelectorCombine);
+        Run("[19/20] Bing 端点与超时", BingEndpoints);
+        Run("[20/20] 进程完整性级别", Integrity);
     }
 
     /// <summary>逐组执行，一组崩掉不影响其它组出结论。</summary>
@@ -1502,6 +1504,27 @@ internal static class CoreTests
         Check.True(
             watch.ElapsedMilliseconds < 1000,
             $"应按端点级 100ms 截断，实际 {watch.ElapsedMilliseconds}ms");
+    }
+
+    /// <summary>完整性级别映射。方向错一次，提示语就会出现在完全正常的机器上。</summary>
+    private static void Integrity()
+    {
+        Check.Equal(IntegrityLevel.Low, ProcessIntegrity.FromRid(0x1000), "0x1000 应为低");
+        Check.Equal(IntegrityLevel.Medium, ProcessIntegrity.FromRid(0x2000), "0x2000 应为普通");
+        Check.Equal(IntegrityLevel.High, ProcessIntegrity.FromRid(0x3000), "0x3000 应为管理员");
+        Check.Equal(IntegrityLevel.System, ProcessIntegrity.FromRid(0x4000), "0x4000 应为系统");
+        Check.Equal(IntegrityLevel.Unknown, ProcessIntegrity.FromRid(0), "0 应为未知");
+        Check.Equal(IntegrityLevel.Unknown, ProcessIntegrity.FromRid(-1), "非法值应为未知");
+
+        // 读不到级别时必须判成"不高于自己"，否则会在正常机器上骚扰用户。
+        Check.False(ProcessIntegrity.IsAboveSelf(IntegrityLevel.Unknown), "未知不应判为更高");
+        Check.False(ProcessIntegrity.IsAboveSelf(ProcessIntegrity.Current), "同级不算更高");
+
+        var level = ProcessIntegrity.Current;
+        Check.True(
+            level is IntegrityLevel.Low or IntegrityLevel.Medium or IntegrityLevel.High or IntegrityLevel.System,
+            $"本进程级别应可读，实际 {level}");
+        Check.True(!string.IsNullOrEmpty(ProcessIntegrity.Describe(level)), "级别应有中文说明");
     }
 
     /// <summary>固定返回预设响应的 HTTP 桩，用来在不联网的情况下验证请求形状。</summary>

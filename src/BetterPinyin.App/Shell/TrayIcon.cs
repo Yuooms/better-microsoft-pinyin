@@ -16,6 +16,11 @@ internal sealed class TrayIcon : IDisposable
 {
     private readonly NotifyIcon _notifyIcon;
     private readonly ToolStripMenuItem _toggleItem;
+    private readonly Action _onOpenAbout;
+
+    /// <summary>下一次气泡被点击时执行的动作用它；默认进「关于」页。</summary>
+    private Action _balloonAction;
+
     private bool _disposed;
 
     /// <summary>创建托盘图标。</summary>
@@ -54,8 +59,10 @@ internal sealed class TrayIcon : IDisposable
 
         _notifyIcon.DoubleClick += (_, _) => onOpenSettings();
 
-        // 更新提示的气泡点一下直接跳到「关于」页，省得用户自己找。
-        _notifyIcon.BalloonTipClicked += (_, _) => onOpenAbout();
+        // 气泡点击默认跳「关于」（更新提示用）；其它气泡可以临时换掉目标页。
+        _onOpenAbout = onOpenAbout;
+        _balloonAction = onOpenAbout;
+        _notifyIcon.BalloonTipClicked += (_, _) => _balloonAction();
     }
 
     /// <summary>更新"启用"菜单项的勾选状态。</summary>
@@ -65,8 +72,10 @@ internal sealed class TrayIcon : IDisposable
     /// <summary>弹一条气泡提示。</summary>
     /// <param name="title">标题。</param>
     /// <param name="message">正文。</param>
-    public void ShowBalloon(string title, string message)
+    /// <param name="onClick">点击气泡时执行的动作；为 null 时进「关于」页。</param>
+    public void ShowBalloon(string title, string message, Action? onClick = null)
     {
+        _balloonAction = onClick ?? _onOpenAbout;
         _notifyIcon.BalloonTipTitle = title;
         _notifyIcon.BalloonTipText = message;
         _notifyIcon.ShowBalloonTip(3000);

@@ -3,6 +3,7 @@ using BetterPinyin.Core.Features;
 using BetterPinyin.Core.Settings;
 using BetterPinyin.Core.Wordbook;
 using BetterPinyin.Interop.Input;
+using BetterPinyin.Interop.Windowing;
 
 namespace BetterPinyin.App.Features.CloudAssist;
 
@@ -17,6 +18,7 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
 {
     private readonly AppSettings _settings;
     private readonly CloudAssistController _controller;
+    private readonly ElevatedForegroundWatch _elevatedWatch = new();
     private CloudCandidateWindow? _window;
     private bool _started;
     private bool _disposed;
@@ -31,6 +33,25 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
             new WordbookSettingsPage(),
         };
     }
+
+    /// <summary>发现前台程序权限高于本程序（云联想在它里面必然不生效）。</summary>
+    public event EventHandler<ElevatedAppEventArgs>? ElevatedAppDetected
+    {
+        add => _elevatedWatch.Detected += value;
+        remove => _elevatedWatch.Detected -= value;
+    }
+
+    /// <summary>最近一次检测到的更高权限程序；没有则为 null。</summary>
+    public string? ElevatedApp => _elevatedWatch.LastProcessName;
+
+    /// <summary>该程序的完整性级别。</summary>
+    public IntegrityLevel ElevatedAppLevel => _elevatedWatch.LastLevel;
+
+    /// <summary>用户是否已经关掉了这条提示（仅本次运行）。</summary>
+    public bool ElevatedNoticeDismissed { get; private set; }
+
+    /// <summary>关闭权限提示。同一进程里不再自动弹出。</summary>
+    public void DismissElevatedNotice() => ElevatedNoticeDismissed = true;
 
     /// <inheritdoc />
     public string Id => "cloud-assist";
@@ -70,6 +91,9 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
         _controller.SuggestionsCleared += OnSuggestionsCleared;
         _controller.Start();
 
+        // 与键盘无关的一条观察线：被 UIPI 拦掉时，按键那边什么都不剩。
+        _elevatedWatch.Start();
+
         AppServices.Controller = _controller;
 
         // 升级前学到的词还停在「待同步」，这里补一次；失败只记日志，下次采纳还会重试。
@@ -98,6 +122,7 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
         _controller.SuggestionsReady -= OnSuggestionsReady;
         _controller.SuggestionsCleared -= OnSuggestionsCleared;
         _controller.Stop();
+        _elevatedWatch.Stop();
 
         if (_window is not null)
         {
@@ -163,6 +188,7 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
         }
 
         _disposed = true;
+        _elevatedWatch.Dispose();
         _controller.Dispose();
     }
 

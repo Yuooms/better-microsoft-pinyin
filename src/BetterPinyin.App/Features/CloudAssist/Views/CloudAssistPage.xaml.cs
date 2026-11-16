@@ -4,9 +4,11 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using BetterPinyin.App.Shell;
 using BetterPinyin.App.Shell.Controls;
 using BetterPinyin.Core.Cloud;
 using BetterPinyin.Core.Settings;
+using BetterPinyin.Interop.Windowing;
 
 namespace BetterPinyin.App.Features.CloudAssist.Views;
 
@@ -92,11 +94,71 @@ public partial class CloudAssistPage : Page
         // 先减后加：缓存页面反复 Loaded 时不会累积重复订阅。
         _feature.Controller.Diagnostics -= OnDiagnostics;
         _feature.Controller.Diagnostics += OnDiagnostics;
+
+        _feature.ElevatedAppDetected -= OnElevatedAppDetected;
+        _feature.ElevatedAppDetected += OnElevatedAppDetected;
+
+        // 页面是后打开的，检测结果可能早就有了，这里补一次。
+        if (!_feature.ElevatedNoticeDismissed && _feature.ElevatedApp is { } elevated)
+        {
+            ShowElevatedNotice(elevated, _feature.ElevatedAppLevel);
+        }
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
     {
         _feature.Controller.Diagnostics -= OnDiagnostics;
+        _feature.ElevatedAppDetected -= OnElevatedAppDetected;
+    }
+
+    private void OnElevatedAppDetected(object? sender, ElevatedAppEventArgs e) =>
+        ShowElevatedNotice(e.ProcessName, e.Level);
+
+    /// <summary>
+    /// 显示"这个程序权限更高"的提示。
+    /// </summary>
+    /// <param name="processName">前台进程名。</param>
+    /// <param name="level">它的完整性级别。</param>
+    /// <remarks>
+    /// 文案要说清因果：不是本程序挑程序，而是 Windows 不让低权限程序看到它的按键。
+    /// 否则用户只会读成"又一个不支持的软件"。
+    /// </remarks>
+    private void ShowElevatedNotice(string processName, IntegrityLevel level)
+    {
+        if (_feature.ElevatedNoticeDismissed)
+        {
+            ElevatedNotice.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        var detail = level switch
+        {
+            IntegrityLevel.High => "以管理员权限运行",
+            IntegrityLevel.System => "以系统权限运行",
+            _ => "以更高权限运行",
+        };
+
+        ElevatedNoticeTitle.Text = $"{processName} {detail}，云联想在它里面不会生效";
+        ElevatedNoticeStatus.Text = string.Empty;
+        ElevatedNotice.Visibility = Visibility.Visible;
+    }
+
+    private void OnRestartElevatedClick(object sender, RoutedEventArgs e)
+    {
+        if (!Elevation.TryRestartElevated(out var error))
+        {
+            ElevatedNoticeStatus.Text = error ?? "未能重启";
+            return;
+        }
+
+        // 新实例会用 --replace 等这边退出后再接管；这里只负责干净地让位。
+        Application.Current?.Shutdown();
+    }
+
+    private void OnDismissElevatedClick(object sender, RoutedEventArgs e)
+    {
+        _feature.DismissElevatedNotice();
+        ElevatedNotice.Visibility = Visibility.Collapsed;
     }
 
     private void OnDiagnostics(object? sender, string message)
