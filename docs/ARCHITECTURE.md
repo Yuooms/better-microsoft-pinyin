@@ -49,13 +49,15 @@
   │
   ├─ 简拼展开：无法完整切分时查词库，把 ystl 展开成 yisitalu
   │
-  ├─ BingSuggestionClient
-  │     ├→ 端点 A(osjson) 失败 → 端点 B(qsonhs) → …
-  │     └→ 返回原始候选文本
+  ├─ 云词源（严格槽用所选来源，扩展槽固定 Bing）
+  │     ├→ BingSuggestionClient：qsonhs（api → cn → www）→ 旧 osjson 兜底（限 500ms）
+  │     ├→ SogouSuggestionClient：单端点，二进制帧，失败即空
+  │     └→ 两条请求并行，返回原始候选文本 + 本次生效的来源
   │
   ├─ ResultSanitizer：截断整句、限长、只留纯汉字、去重
   ├─ PinyinMatcher：候选驱动 DP，算出「整词 / 末音节未打完 / 简拼 / 扩展」
-  ├─ SuggestionSelector：严格槽取第一条整词，扩展槽取前缀更长的词
+  ├─ SuggestionSelector：严格槽取第一条整词，扩展槽取前缀更长的词；
+  │    双源模式下用 Combine 把两次分区拼成一个展示集
   │
   ├─ ActivationMap：按键 → 采纳目标（严格 = ·，扩展 = 本地候选之后的数字）
   ├─ CloudCandidateWindow：贴在候选条下沿或左侧，不抢焦点
@@ -89,6 +91,8 @@
 | 排序权重写死在代码里、条数开放到设置 | 权重属于产品调性，不该让用户面对一堆旋钮；条数是真实偏好，开放 |
 | 设置窗口导航由模块注册表生成 | 新增功能不需要改外壳，符合"方便后续扩展"的要求 |
 | 一处失败只降级、不打断 | 云端失败、UIA 失败、去重失败都不影响输入法与上屏；底线是"读不到也不影响打字" |
+| 严格槽来源可切换，扩展槽固定 Bing | 搜狗对新人名/新词命中更好但只给整词；扩展词本来就要靠搜索引擎的前缀联想 |
+| 双源并发而不是串行 | 两个来源互不依赖，串行会把延迟相加；只有扩展开启时才请求 Bing，关了就不发 |
 
 ## 扩展点
 
@@ -98,7 +102,9 @@
 
 ### 2. 新增一个云词源
 
-实现 `ICloudSuggestionProvider`：只负责"给定输入串返回原始候选文本"，清洗、校验、排序、缓存都在外层复用。
+实现 `ICloudSuggestionProvider`：只负责"给定输入串返回原始候选文本 + 本次生效的来源"，清洗、校验、排序、缓存都在外层复用。随后在 `CloudSourceCatalog` 登记 id、在设置页的来源下拉加一项即可。
+
+协议不是 JSON 时，照 `Cloud/Sogou/` 的拆法：组帧（`SogouFrame`）与解帧（`SogouResponseParser`）各自是纯函数，解析层任何输入都不许抛异常，客户端只负责 HTTP 与超时。
 
 ### 3. 接入更多输入法
 

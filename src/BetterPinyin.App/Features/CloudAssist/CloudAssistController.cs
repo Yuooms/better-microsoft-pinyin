@@ -1,5 +1,6 @@
 using BetterPinyin.Contracts;
 using BetterPinyin.Core.Cloud;
+using BetterPinyin.Core.Cloud.Sogou;
 using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Ranking;
 using BetterPinyin.Core.Settings;
@@ -63,7 +64,8 @@ internal sealed class CloudAssistController : IDisposable
         Environment.GetEnvironmentVariable("BETTERPINYIN_TRACE_KEYS") == "1";
 
     private readonly AppSettings _settings;
-    private readonly BingSuggestionClient _client;
+    private readonly BingSuggestionClient _bing;
+    private readonly SogouSuggestionClient _sogou;
     private readonly KeyboardHub _hub;
     private readonly CompositionTracker _tracker;
 
@@ -93,9 +95,12 @@ internal sealed class CloudAssistController : IDisposable
         _settings = settings;
         _hub = hub;
         _tracker = hub.Tracker;
-        _client = new BingSuggestionClient(
+        _bing = new BingSuggestionClient(
             Http.Client,
             settings.Market,
+            timeoutMilliseconds: settings.RequestTimeoutMs);
+        _sogou = new SogouSuggestionClient(
+            Http.Client,
             timeoutMilliseconds: settings.RequestTimeoutMs);
         _matcher = AppServices.CreateMatcher();
     }
@@ -430,37 +435,57 @@ internal sealed class CloudAssistController : IDisposable
 
             SuggestionSet? lastSet = null;
             var rawCount = 0;
+            var strictSourceId = CloudSourceCatalog.Normalize(_settings.StrictProvider);
 
             foreach (var request in requests)
             {
-                var items = await _client.GetSuggestionsAsync(request, cancellationToken).ConfigureAwait(false);
-                rawCount += items.Count;
+                SuggestionSet attempt;
 
-                if (cancellationToken.IsCancellationRequested || version != _tracker.Version)
+                if (strictSourceId == CloudSourceCatalog.SogouId)
                 {
-                    return;
+                    var dual = await QueryDualSourceAsync(
+                            request, local, options, snapshot, wordbook, cancellationToken)
+                        .ConfigureAwait(false);
+                    rawCount += dual.RawCount;
+
+                    if (cancellationToken.IsCancellationRequested || version != _tracker.Version)
+                    {
+                        return;
+                    }
+
+                    attempt = dual.Set;
                 }
+                else
+                {
+                    var answer = await _bing.QueryAsync(request, cancellationToken).ConfigureAwait(false);
+                    rawCount += answer.Items.Count;
 
-                // 回显比对要用本次实际请求的串：简拼展开后请求的是全拼（rineiwa），不是 raw（rnw）。
-                // 被遗忘的词在这里就剔掉，不让它进入后续分区。
-                var cleaned = ResultSanitizer.Sanitize(
-                    items,
-                    request,
-                    SanitizeOptions.Extended,
-                    AppServices.Wordbook.HiddenTexts);
+                    if (cancellationToken.IsCancellationRequested || version != _tracker.Version)
+                    {
+                        return;
+                    }
 
-                // 分区同样必须用实际请求串。拿 raw 校验时，rnw（3 个字母）永远匹配不上
-                // 「日内瓦公约」（5 个音节），整个批次会被判成 None 丢掉。
-                var attempt = SuggestionSelector.Select(
-                    request,
-                    cleaned,
-                    local,
-                    _matcher,
-                    options,
-                    snapshot.Items.Count,
-                    snapshot.Quality == CandidateReadQuality.Exact,
-                    _client.LastEndpointId ?? "bing",
-                    wordbook);
+                    // 回显比对要用本次实际请求的串：简拼展开后请求的是全拼（rineiwa），不是 raw（rnw）。
+                    // 被遗忘的词在这里就剔掉，不让它进入后续分区。
+                    var cleaned = ResultSanitizer.Sanitize(
+                        answer.Items,
+                        request,
+                        SanitizeOptions.Extended,
+                        AppServices.Wordbook.HiddenTexts);
+
+                    // 分区同样必须用实际请求串。拿 raw 校验时，rnw（3 个字母）永远匹配不上
+                    // 「日内瓦公约」（5 个音节），整个批次会被判成 None 丢掉。
+                    attempt = SuggestionSelector.Select(
+                        request,
+                        cleaned,
+                        local,
+                        _matcher,
+                        options,
+                        snapshot.Items.Count,
+                        snapshot.Quality == CandidateReadQuality.Exact,
+                        answer.SourceId,
+                        wordbook);
+                }
 
                 lastSet = attempt;
 
@@ -470,7 +495,7 @@ internal sealed class CloudAssistController : IDisposable
                     continue;
                 }
 
-                Publish(attempt, raw, version, mode, anchorPoint, snapshot, _client.LastEndpointId ?? "-");
+                Publish(attempt, raw, version, mode, anchorPoint, snapshot, DescribeSources(attempt));
                 return;
             }
 
@@ -485,6 +510,88 @@ internal sealed class CloudAssistController : IDisposable
         {
             Report($"查询异常：{ex.GetType().Name} {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// 双源查询：严格槽查用户选择的来源，扩展槽查 Bing。
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// 两条请求并行发出，总延迟取较大者而不是相加。
+    /// </para>
+    /// <para>
+    /// 扩展云联想关闭时根本不请求 Bing：用户选了别的来源，就不该再把拼音发给 Bing；
+    /// 这时严格槽也只在所选来源里找，取不到就空着，不偷偷回退。
+    /// 只有扩展开启、Bing 响应已经在手时，才拿它的严格槽做零成本回退。
+    /// </para>
+    /// </remarks>
+    private async Task<(SuggestionSet Set, int RawCount)> QueryDualSourceAsync(
+        string request,
+        IReadOnlyList<string> local,
+        SuggestionSelectionOptions options,
+        CandidateWindowSnapshot snapshot,
+        IReadOnlyList<string> wordbook,
+        CancellationToken cancellationToken)
+    {
+        // 严格云联想关掉时也不必问搜狗，只查 Bing 的扩展槽。
+        var strictTask = options.StrictEnabled
+            ? _sogou.QueryAsync(request, cancellationToken)
+            : Task.FromResult(CloudProviderAnswer.Empty(CloudSourceCatalog.SogouId));
+        var extendedTask = options.ExtendedEnabled
+            ? _bing.QueryAsync(request, cancellationToken)
+            : Task.FromResult(CloudProviderAnswer.Empty(CloudSourceCatalog.BingId));
+
+        await Task.WhenAll(strictTask, extendedTask).ConfigureAwait(false);
+
+        var strictAnswer = await strictTask.ConfigureAwait(false);
+        var extendedAnswer = await extendedTask.ConfigureAwait(false);
+        var hidden = AppServices.Wordbook.HiddenTexts;
+
+        var strictSet = SuggestionSelector.Select(
+            request,
+            ResultSanitizer.Sanitize(strictAnswer.Items, request, SanitizeOptions.Extended, hidden),
+            local,
+            _matcher,
+            options with { ExtendedEnabled = false },
+            snapshot.Items.Count,
+            snapshot.Quality == CandidateReadQuality.Exact,
+            strictAnswer.SourceId,
+            wordbook);
+
+        if (!options.ExtendedEnabled)
+        {
+            return (strictSet, strictAnswer.Items.Count);
+        }
+
+        var extendedSet = SuggestionSelector.Select(
+            request,
+            ResultSanitizer.Sanitize(extendedAnswer.Items, request, SanitizeOptions.Extended, hidden),
+            local,
+            _matcher,
+            options,
+            snapshot.Items.Count,
+            snapshot.Quality == CandidateReadQuality.Exact,
+            extendedAnswer.SourceId,
+            wordbook);
+
+        // Bing 的响应已经在手，严格槽用它顶上不产生额外请求，候选上的来源标识仍记真实出处。
+        var merged = strictSet.Strict is null && extendedSet.Strict is not null
+            ? strictSet with { Strict = extendedSet.Strict }
+            : strictSet;
+
+        return (
+            SuggestionSelector.Combine(merged, extendedSet),
+            strictAnswer.Items.Count + extendedAnswer.Items.Count);
+    }
+
+    /// <summary>把两个槽各自的来源拼成一行人话，用于诊断。</summary>
+    /// <param name="set">分区结果。</param>
+    /// <returns>形如 <c>严格=sogou，扩展=bing-qsonhs</c> 的说明。</returns>
+    private static string DescribeSources(SuggestionSet set)
+    {
+        var strict = set.Strict?.ProviderId ?? "-";
+        var extended = set.Extended.Count > 0 ? set.Extended[0].ProviderId : "-";
+        return $"严格={strict}，扩展={extended}";
     }
 
     /// <summary>

@@ -1,6 +1,11 @@
+using System.Diagnostics;
+using System.Net;
+using System.Net.Http;
+using System.Text;
 using BetterPinyin.Contracts;
 using BetterPinyin.Core.Cloud;
 using BetterPinyin.Core.Cloud.Bing;
+using BetterPinyin.Core.Cloud.Sogou;
 using BetterPinyin.Core.Lexicon;
 using BetterPinyin.Core.Pinyin;
 using BetterPinyin.Core.Ranking;
@@ -81,21 +86,25 @@ internal static class CoreTests
 {
     public static void RunAll()
     {
-        Run("[1/15] Bing 响应解析", Parser);
-        Run("[2/15] 候选清洗", Sanitizer);
-        Run("[3/15] 拼音匹配", Matcher);
-        Run("[4/15] 严格 / 扩展分区", Selector);
-        Run("[5/15] 排序合并（旧链路）", Ranker);
-        Run("[6/15] 设置持久化", Settings);
-        Run("[7/15] 词库词表", Catalog);
-        Run("[8/15] 用户词库", Wordbook);
-        Run("[9/15] 自学习词库", Learning);
-        Run("[10/15] 自学习词库删除", LearningDelete);
-        Run("[11/15] 自学习词库备份", LearningBackup);
-        Run("[12/15] 开机启动登记", StartupRegistrationTest);
-        Run("[13/15] 输入统计", Statistics);
-        Run("[14/15] 组字状态机", CompositionTrackerStates);
-        Run("[15/15] 版本检查与更新脚本", Updates);
+        Run("[1/19] Bing 响应解析", Parser);
+        Run("[2/19] 候选清洗", Sanitizer);
+        Run("[3/19] 拼音匹配", Matcher);
+        Run("[4/19] 严格 / 扩展分区", Selector);
+        Run("[5/19] 排序合并（旧链路）", Ranker);
+        Run("[6/19] 设置持久化", Settings);
+        Run("[7/19] 词库词表", Catalog);
+        Run("[8/19] 用户词库", Wordbook);
+        Run("[9/19] 自学习词库", Learning);
+        Run("[10/19] 自学习词库删除", LearningDelete);
+        Run("[11/19] 自学习词库备份", LearningBackup);
+        Run("[12/19] 开机启动登记", StartupRegistrationTest);
+        Run("[13/19] 输入统计", Statistics);
+        Run("[14/19] 组字状态机", CompositionTrackerStates);
+        Run("[15/19] 版本检查与更新脚本", Updates);
+        Run("[16/19] 搜狗组帧与解帧", Sogou);
+        Run("[17/19] 搜狗客户端（桩 HTTP）", SogouClient);
+        Run("[18/19] 双源合并", SelectorCombine);
+        Run("[19/19] Bing 端点与超时", BingEndpoints);
     }
 
     /// <summary>逐组执行，一组崩掉不影响其它组出结论。</summary>
@@ -1181,6 +1190,10 @@ internal static class CoreTests
             Check.True(defaults.UpdateCheckEnabled, "默认开启启动时检查更新");
             Check.True(defaults.LastUpdateCheckUtc is null, "默认没有检查记录");
             Check.True(!defaults.PhraseWriteExtended, "扩展词默认不写入自定义短语");
+            Check.Equal("bing", defaults.StrictProvider, "云联想来源默认 Bing");
+            Check.Equal("sogou", CloudSourceCatalog.Normalize("SOGOU"), "来源取值应忽略大小写");
+            Check.Equal("bing", CloudSourceCatalog.Normalize("baidu"), "未知来源应回落到 Bing");
+            Check.Equal("bing", CloudSourceCatalog.Normalize(null), "空来源应回落到 Bing");
             Check.True(store.LastError is null, "文件不存在时不应报错");
 
             defaults.StrictAcceptKey = "Semicolon";
@@ -1196,6 +1209,12 @@ internal static class CoreTests
             Check.Equal("Left", reloaded.OverlayPlacement, "浮窗位置应持久化");
             Check.True(reloaded.PhraseWriteExtended, "扩展词写入开关应持久化");
             Check.Contains(reloaded.BlockedProcesses, "mstsc", "黑名单应持久化");
+
+            // 老配置里没有 StrictProvider：必须读到默认值，且不影响其它字段。
+            File.WriteAllText(path, "{\"StrictEnabled\":false}");
+            var legacy = new SettingsStore(path).Load();
+            Check.Equal("bing", legacy.StrictProvider, "老配置的来源应回落到 Bing");
+            Check.False(legacy.StrictEnabled, "老配置的其它字段仍应正常读取");
 
             File.WriteAllText(path, "{ 这不是合法 JSON");
             var recovered = new SettingsStore(path).Load();
@@ -1216,6 +1235,292 @@ internal static class CoreTests
                 // 临时目录清理失败不影响测试结论。
             }
         }
+    }
+
+    // 2026-11-16 实测响应，作为离线回归样本；搜狗改协议时这几条会先失败。
+    private const string SogouNihaoHex =
+        "4B000500000000000000000000090000000003000400604F7D590400DB007500040002000500010400604FF7530400DB007500040002000500010400E56C8E560400DB00750004000200050001";
+
+    private const string SogouYanglikunHex =
+        "5D00050000000000000000000009000000000300060068673D4E645706006B01AD00A30006000400060009000106006867CB7A645706006B01AD00A30006000400060009000106006867CB7A066606006B01AD00A300060004000600090001";
+
+    private const string SogouChinaHex =
+        "43000500000000000000000000090000000001000E002D4E4E53BA4E116C71518C54FD560E008B017D001001CC006700760070000E00050008000B000E0012001400170001";
+
+    /// <summary>把十六进制串还原成字节。</summary>
+    private static byte[] Hex(string value) => Convert.FromHexString(value);
+
+    private static void Sogou()
+    {
+        // 组帧：与实测抓包逐字节对齐。
+        var frame = SogouFrame.Build("nihao");
+        Check.Equal(15, frame.Length, "nihao 帧长");
+        Check.Equal((byte)15, frame[0], "帧头是总长");
+        Check.Equal((byte)5, frame[8], "第 8 字节是拼音长度");
+        Check.Equal("nihao", Encoding.ASCII.GetString(frame, 9, 5), "拼音原样写入");
+
+        byte checksum = 0;
+        for (var i = 0; i < frame.Length - 1; i++)
+        {
+            checksum ^= frame[i];
+        }
+
+        Check.Equal(checksum, frame[^1], "末字节是前序异或");
+        Check.Equal(
+            "0F00050000000001056E6968616F6F",
+            Convert.ToHexString(frame),
+            "整帧应与实测一致");
+
+        Check.Equal(0, SogouFrame.Build(string.Empty).Length, "空串不组帧");
+        Check.Equal(0, SogouFrame.Build(null).Length, "null 不组帧");
+        Check.Equal(0, SogouFrame.Build("你好").Length, "汉字不组帧");
+        Check.Equal(0, SogouFrame.Build("ni hao").Length, "空格不组帧");
+        Check.Equal(
+            0,
+            SogouFrame.Build(new string('a', SogouFrame.MaxQueryBytes + 1)).Length,
+            "超长不组帧");
+        Check.Equal(15, SogouFrame.Build("NIHAO").Length, "大写应转小写后组帧");
+
+        // 解帧：三份实测响应。
+        var nihao = SogouResponseParser.Parse(Hex(SogouNihaoHex));
+        Check.Equal(3, nihao.Count, "nihao 应解析出 3 条");
+        Check.Equal("你好", nihao[0], "nihao 首条");
+
+        var yang = SogouResponseParser.Parse(Hex(SogouYanglikunHex));
+        Check.Equal(3, yang.Count, "yanglikun 应解析出 3 条");
+        Check.Equal("杨立昆", yang[^1], "yanglikun 最后一条");
+
+        var china = SogouResponseParser.Parse(Hex(SogouChinaHex));
+        Check.Equal(1, china.Count, "长词应解析出 1 条");
+        Check.Equal("中华人民共和国", china[0], "长词文本");
+
+        // 截断：任何前缀都不能抛异常，条数也不能离谱。
+        var bytes = Hex(SogouNihaoHex);
+        for (var length = 0; length < bytes.Length; length++)
+        {
+            try
+            {
+                var partial = SogouResponseParser.Parse(bytes.AsSpan(0, length));
+                Check.True(partial.Count <= 3, $"截断到 {length} 字节时条数应合理");
+            }
+            catch (Exception ex)
+            {
+                Check.True(false, $"截断到 {length} 字节时不应抛异常：{ex.GetType().Name}");
+            }
+        }
+
+        // 畸形帧。
+        Check.Equal(0, SogouResponseParser.Parse(Array.Empty<byte>()).Count, "空响应应返空");
+        Check.Equal(0, SogouResponseParser.Parse(new byte[] { 0x16 }).Count, "长度不符应整帧拒绝");
+        Check.Equal(0, SogouResponseParser.Parse(new byte[0x30]).Count, "全零帧应返空");
+
+        var badCount = Hex(SogouNihaoHex);
+        badCount[0x12] = 0xFF;
+        badCount[0x13] = 0xFF;
+        Check.Equal(0, SogouResponseParser.Parse(badCount).Count, "候选数异常应返空");
+
+        var badLength = Hex(SogouNihaoHex);
+        badLength[0x14] = 0xFF;
+        badLength[0x15] = 0xFF;
+        Check.Equal(0, SogouResponseParser.Parse(badLength).Count, "词长越界应停止解析");
+
+        // 与清洗链路配合：解析结果必须能全量通过汉字过滤。
+        var cleaned = ResultSanitizer.Sanitize(nihao, "nihao", SanitizeOptions.Extended);
+        Check.Equal(3, cleaned.Count, "实测候选应通过清洗");
+    }
+
+    private static void SogouClient()
+    {
+        var body = Hex(SogouNihaoHex);
+        string? method = null;
+        string? contentType = null;
+        string? url = null;
+        byte[]? requestBody = null;
+
+        using var http = new HttpClient(new StubHandler(request =>
+        {
+            method = request.Method.Method;
+            contentType = request.Content?.Headers.ContentType?.MediaType;
+            url = request.RequestUri?.ToString();
+            requestBody = request.Content?.ReadAsByteArrayAsync().GetAwaiter().GetResult();
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(body),
+            };
+        }));
+
+        var client = new SogouSuggestionClient(http, timeoutMilliseconds: 2000);
+        var answer = client.QueryAsync("nihao", CancellationToken.None).GetAwaiter().GetResult();
+
+        Check.Equal("sogou", answer.SourceId, "来源标识");
+        Check.Equal("sogou", client.Id, "接口上的来源标识");
+        Check.Equal(3, answer.Items.Count, "桩响应应解析出 3 条");
+        Check.Equal("POST", method, "应使用 POST");
+        Check.Equal("application/octet-stream", contentType, "请求体类型");
+        Check.Equal(SogouFrame.Endpoint, url, "请求地址");
+        Check.True(
+            requestBody is not null && requestBody.SequenceEqual(SogouFrame.Build("nihao")),
+            "请求体应与组帧一致");
+
+        using var failing = new HttpClient(
+            new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.InternalServerError)));
+        var failed = new SogouSuggestionClient(failing, 2000)
+            .QueryAsync("nihao", CancellationToken.None).GetAwaiter().GetResult();
+        Check.Equal(0, failed.Items.Count, "非 200 应返空");
+        Check.Equal("sogou", failed.SourceId, "失败时仍保留来源标识");
+
+        using var garbage = new HttpClient(new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(new byte[] { 1, 2, 3, 4 }),
+        }));
+        var junk = new SogouSuggestionClient(garbage, 2000)
+            .QueryAsync("nihao", CancellationToken.None).GetAwaiter().GetResult();
+        Check.Equal(0, junk.Items.Count, "垃圾响应应返空");
+
+        // 组帧失败时不该发请求：双拼/汉字输入会走到这里。
+        var touched = false;
+        using var guarded = new HttpClient(new StubHandler(_ =>
+        {
+            touched = true;
+            return new HttpResponseMessage(HttpStatusCode.OK);
+        }));
+        var skipped = new SogouSuggestionClient(guarded, 2000)
+            .QueryAsync("你好", CancellationToken.None).GetAwaiter().GetResult();
+        Check.Equal(0, skipped.Items.Count, "非字母输入应返空");
+        Check.False(touched, "非字母输入不应触发 HTTP");
+    }
+
+    private static void SelectorCombine()
+    {
+        var matcher = new PinyinMatcher(FakeLexicon.Create());
+        var options = new SuggestionSelectionOptions(
+            StrictEnabled: true,
+            StrictDedupeLocal: true,
+            ExtendedEnabled: true,
+            ExtendedMaxCount: 2);
+
+        // 严格槽来自搜狗（只有整词），扩展槽来自 Bing。
+        var strictSet = SuggestionSelector.Select(
+            "yisitalu",
+            new[] { "伊斯塔露" },
+            localCandidates: Array.Empty<string>(),
+            matcher,
+            options with { ExtendedEnabled = false },
+            providerId: "sogou");
+
+        var extendedSet = SuggestionSelector.Select(
+            "yisitalu",
+            new[] { "伊斯塔露", "伊斯塔路是谁", "伊斯塔露英文" },
+            localCandidates: Array.Empty<string>(),
+            matcher,
+            options,
+            providerId: "bing-osjson");
+
+        var combined = SuggestionSelector.Combine(strictSet, extendedSet);
+
+        Check.Equal("伊斯塔露", combined.Strict?.Text, "严格槽应取前者");
+        Check.Equal("sogou", combined.Strict?.ProviderId, "严格槽来源");
+        Check.Equal(2, combined.Extended.Count, "扩展槽应取后者");
+        Check.True(combined.Extended.All(e => e.ProviderId == "bing-osjson"), "扩展槽来源");
+        Check.NotContains(combined.Extended.Select(e => e.Text), "伊斯塔露", "扩展槽应剔除与严格槽重复的词");
+        Check.True(
+            combined.Diagnostic.Contains("严格=伊斯塔露", StringComparison.Ordinal),
+            "诊断应包含严格槽文本");
+
+        // 严格槽为空时不应吞掉扩展槽。
+        var emptyStrict = SuggestionSelector.Select(
+            "yisitalu",
+            Array.Empty<string>(),
+            null,
+            matcher,
+            options with { ExtendedEnabled = false },
+            providerId: "sogou");
+
+        var merged = SuggestionSelector.Combine(emptyStrict, extendedSet);
+        Check.True(merged.Strict is null, "严格槽应保持为空");
+        Check.Equal(2, merged.Extended.Count, "扩展槽应保留");
+    }
+
+    /// <summary>端点清单的护栏：失效端点不得再排到前面，端点级超时只能收紧。</summary>
+    private static void BingEndpoints()
+    {
+        var endpoints = BingEndpointCatalog.CloudEndpoints;
+        var ids = endpoints.Select(e => e.Id).ToArray();
+
+        Check.Equal(4, ids.Length, "Bing 端点数量");
+        Check.Equal("bing-qsonhs", ids[0], "首选端点应为 qsonhs");
+        Check.Equal("bing-osjson", ids[^1], "osjson 已失效，只能作为最后兜底");
+        Check.True(
+            endpoints.Take(3).All(e => e.Format == BingResponseFormat.SearchBoxJson),
+            "前三顺位都应是搜索框格式");
+
+        // 端点级超时只能收紧：末位端点带 500ms，其余沿用全局。
+        var legacy = endpoints[^1];
+        Check.Equal(500, legacy.TimeoutMilliseconds ?? 0, "末位端点应有用 500ms 的收紧超时");
+        Check.True(
+            legacy.ResolveTimeout(1500) == 500,
+            "全局 1500ms 时应压到 500ms");
+        Check.True(
+            legacy.ResolveTimeout(300) == 300,
+            "全局比端点级更短时不得放宽到 500ms");
+        Check.True(
+            endpoints.Take(3).All(e => e.TimeoutMilliseconds is null),
+            "正常端点不该有自己的超时，应跟随设置");
+
+        // 行为验证：慢端点在端点级超时到点后必须放弃，不能拖到全局超时。
+        // 用 400ms 的延迟对比 100ms 的预算，留足 4 倍余量，避免机器繁忙时抖动。
+        const string body =
+            """{"AS":{"Results":[{"Suggests":[{"Txt":"微软件"},{"Txt":"微软"}]}]}}""";
+        var slowEndpoint = new BingEndpoint(
+            "slow-test",
+            "example.invalid",
+            "/suggest",
+            BingResponseFormat.SearchBoxJson,
+            HasContentFilter: false,
+            "测试用慢端点",
+            TimeoutMilliseconds: 100);
+
+        using var slowHttp = new HttpClient(new StubHandler(async (_, token) =>
+        {
+            await Task.Delay(400, token).ConfigureAwait(false);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            };
+        }));
+
+        var slowClient = new BingSuggestionClient(
+            slowHttp,
+            endpoints: new[] { slowEndpoint },
+            timeoutMilliseconds: 1500);
+
+        var watch = Stopwatch.StartNew();
+        var slowAnswer = slowClient.QueryAsync("weiruan", CancellationToken.None).GetAwaiter().GetResult();
+        watch.Stop();
+
+        Check.Equal(0, slowAnswer.Items.Count, "端点级超时到点应返空");
+        Check.True(
+            watch.ElapsedMilliseconds < 1000,
+            $"应按端点级 100ms 截断，实际 {watch.ElapsedMilliseconds}ms");
+    }
+
+    /// <summary>固定返回预设响应的 HTTP 桩，用来在不联网的情况下验证请求形状。</summary>
+    private sealed class StubHandler : HttpMessageHandler
+    {
+        private readonly Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _responder;
+
+        public StubHandler(Func<HttpRequestMessage, HttpResponseMessage> responder)
+            : this((request, _) => Task.FromResult(responder(request)))
+        {
+        }
+
+        public StubHandler(Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> responder) =>
+            _responder = responder;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            _responder(request, cancellationToken);
     }
 
     private static void Expect(
