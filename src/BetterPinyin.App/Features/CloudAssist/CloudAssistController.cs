@@ -888,11 +888,12 @@ internal sealed class CloudAssistController : IDisposable
             return;
         }
 
-        // Reading 是本次实际请求的拼音串（简拼已被展开成全拼）；缺失时退回原始输入。
-        var pinyin = target.Suggestion.Reading;
-        if (string.IsNullOrEmpty(pinyin))
+        // 读音要从「候选词 + 用户真实输入」还原：Reading 是请求串，简拼取不到展开时
+        // 它就是 chtqt 这种半截串，Learn 会在切分那一步拒绝，词静默地学不进去。
+        if (!_matcher.TryResolveReading(query, text, out var pinyin))
         {
-            pinyin = query;
+            // 还原不出来时退回请求串：词库未加载等降级场景下它仍是有效的全拼。
+            pinyin = target.Suggestion.Reading ?? query;
         }
 
         if (AppServices.Wordbook.Learn(text, pinyin, query, out var word))
@@ -910,6 +911,11 @@ internal sealed class CloudAssistController : IDisposable
                     Report($"已写入微软拼音自定义短语：{word.Text}");
                 }
             }
+        }
+        else
+        {
+            // 不记也要留一行：否则「已上屏」后面什么都没有，用户只能看到词没进库。
+            Report($"未记入词库：{text}（读音「{pinyin}」切不出音节）");
         }
     }
 

@@ -605,6 +605,20 @@ internal static class CoreTests
             matcher,
             options);
         Check.True(none.IsEmpty, "没有云端也没有词库时为空");
+
+        // 真实回归：只打简拼 chtqt 采纳「此花亭奇谭」，云端正常上屏，却一直没进词库。
+        // 原因是记账时把请求串（chtqt）当拼音，Learn 切不出音节就静默返回 false。
+        // 简拼展开也救不了：这个词不在内置词库里，ExpandAbbreviation 是空的。
+        var readingMatcher = new PinyinMatcher(builtin);
+        Check.Equal(0, builtin.ExpandAbbreviation("chtqt", 2).Count, "内置词库展开不出 chtqt");
+        Check.True(
+            readingMatcher.TryResolveReading("chtqt", "此花亭奇谭", out var chtqt),
+            "简拼应能从候选词还原出全拼");
+        Check.Equal("cihuatingqitan", chtqt, "还原出的全拼");
+        Check.False(book.Learn("此花亭奇谭", "chtqt", "chtqt", out _), "直接拿简拼当拼音应被拒绝");
+        Check.True(book.Learn("此花亭奇谭", chtqt, "chtqt", out var learned), "还原后的全拼应能进词库");
+        Check.Equal("chtqt", learned.Initials, "词条声母串与用户敲的一致");
+        Check.Equal("chtqt", PhraseVariants.InitialsOf(chtqt), "写入自定义短语的简拼与输入一致");
     }
 
     private static void Catalog()
@@ -1110,6 +1124,30 @@ internal static class CoreTests
 
         // 未收录的字不能猜读音，严格模式直接拒绝。
         Check.Equal(PinyinMatchKind.None, fuzzy.Match("ceshi", "测试").Kind, "未收录字应不匹配");
+
+        // 采纳后要记账，记账要的是全拼：从候选词自己的读音还原，而不是照抄输入串。
+        // 「打简拼 → 学不进词库」就是这里缺了一步还原，词在日志里只剩「已上屏」。
+        Check.True(fuzzy.TryResolveReading("yisitalu", "伊斯塔露", out var full), "全拼应能原样还原");
+        Check.Equal("yisitalu", full, "全拼还原结果");
+
+        Check.True(fuzzy.TryResolveReading("ystl", "伊斯塔露", out var fromAbbreviation), "简拼应能还原成全拼");
+        Check.Equal("yisitalu", fromAbbreviation, "简拼还原结果");
+
+        Check.True(fuzzy.TryResolveReading("yisital", "伊斯塔露", out var fromPartial), "末音节没打完也应能还原");
+        Check.Equal("yisitalu", fromPartial, "残段还原结果");
+
+        // 多音字按输入的声母收敛：yinhang 是银行，不是 yinxing。
+        Check.True(fuzzy.TryResolveReading("yinhang", "银行", out var polyphone), "多音字应能还原");
+        Check.Equal("yinhang", polyphone, "多音字取声母对得上的那个读音");
+
+        // 模糊音、儿化都要归一成规范拼写，否则写进自定义短语的触发码对不上。
+        Check.True(fuzzy.TryResolveReading("zongguo", "中国", out var fuzzyReading), "模糊音应能还原");
+        Check.Equal("zhongguo", fuzzyReading, "模糊音归一成规范拼写");
+        Check.True(fuzzy.TryResolveReading("huar", "花儿", out var erhua), "儿化应能还原");
+        Check.Equal("huaer", erhua, "儿化归一成 er");
+
+        Check.False(fuzzy.TryResolveReading("ystl", "伊斯塔", out _), "字数与声母数不一致应失败");
+        Check.False(fuzzy.TryResolveReading("ceshi", "测试", out _), "未收录字应还原失败");
     }
 
     private static void Selector()

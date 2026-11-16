@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace BetterPinyin.Core.Pinyin;
 
 /// <summary>
@@ -79,28 +81,9 @@ public sealed class PinyinMatcher
         }
 
         var length = candidate.Length;
-        if (length > MaxLemmaLength)
+        if (length > MaxLemmaLength || !TryCollectReadings(candidate, out var readings))
         {
             return PinyinMatch.None;
-        }
-
-        var readings = new ushort[length][];
-        for (var i = 0; i < length; i++)
-        {
-            if (!_lexicon.TryGetReadings(candidate[i], out var slots))
-            {
-                return PinyinMatch.None;
-            }
-
-            // 槽位是「音节 id + 1」，0 表示空槽。这里必须原样保留偏移，
-            // 否则 id 0（音节 a）会和空槽撞在一起，后续再减 1 还会整体错位。
-            var copy = new ushort[slots.Length];
-            for (var s = 0; s < slots.Length; s++)
-            {
-                copy[s] = slots[s];
-            }
-
-            readings[i] = copy;
         }
 
         var best = Search(normalized, readings);
@@ -114,6 +97,251 @@ public sealed class PinyinMatcher
                 : PinyinMatch.None,
         };
     }
+
+    /// <summary>
+    /// 还原候选词在本次输入下的完整读音。
+    /// </summary>
+    /// <param name="query">用户实际输入串（全拼、简拼、或末音节没打完都算）。</param>
+    /// <param name="candidate">候选词。</param>
+    /// <param name="reading">还原出的无调全拼；失败时为空串。</param>
+    /// <returns>能还原返回 true。</returns>
+    /// <remarks>
+    /// <para>
+    /// 上屏之后要记账（写用户词库、进而写自定义短语），那里要的是一串**能被完整切分**的全拼。
+    /// <see cref="Match"/> 只回答「配不配」，不带回读音；把用户敲的简拼（<c>chtqt</c>）
+    /// 当拼音存进词库，<see cref="Wordbook.UserWordbook.Learn"/> 会在切分那一步直接拒绝，
+    /// 词就静默地学不进去——日志里只有「已上屏」，永远等不到「已记入词库」。
+    /// </para>
+    /// <para>
+    /// 还原依据是**候选词自己的读音集合**，不是输入串：同一个输入可能对上好几个词，
+    /// 简拼展开出来的全拼属于「别的词」，照抄会把短语写到错误的拼音下面。
+    /// </para>
+    /// </remarks>
+    public bool TryResolveReading(string query, string candidate, out string reading)
+    {
+        reading = string.Empty;
+        if (string.IsNullOrEmpty(query) || string.IsNullOrEmpty(candidate) || !IsAvailable)
+        {
+            return false;
+        }
+
+        var normalized = query.ToLowerInvariant();
+        foreach (var ch in normalized)
+        {
+            if (ch is < 'a' or > 'z')
+            {
+                return false;
+            }
+        }
+
+        var length = candidate.Length;
+        if (length > MaxLemmaLength || !TryCollectReadings(candidate, out var readings))
+        {
+            return false;
+        }
+
+        // 输入本来就是全拼、且音节数与字数对得上：切分结果直接可用。
+        // 但它会保留用户敲的模糊音拼写（zongguo 不会归一成 zhongguo），
+        // 所以放在后面兜底，优先走下面按候选词读音还原的两条路。
+        var split = _table.TrySplit(normalized, FuzzyEnabled, out var parts) && parts.Count == length;
+
+        var chosen = new int[length];
+
+        // 一个字母一个声母：简拼（chtqt → cihua ting qi tan）。
+        if (normalized.Length == length && ResolveInitials(normalized, readings, chosen))
+        {
+            reading = Compose(chosen);
+            return true;
+        }
+
+        // 末音节只打了一半（yisital → 伊斯塔露）。
+        if (ResolveGreedy(normalized, readings, chosen))
+        {
+            reading = Compose(chosen);
+            return true;
+        }
+
+        if (split)
+        {
+            reading = string.Concat(parts);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>取候选词每个字的读音槽位，匹配与还原读音共用。</summary>
+    private bool TryCollectReadings(string candidate, out ushort[][] readings)
+    {
+        var length = candidate.Length;
+        readings = new ushort[length][];
+        for (var i = 0; i < length; i++)
+        {
+            if (!_lexicon.TryGetReadings(candidate[i], out var slots))
+            {
+                return false;
+            }
+
+            // 槽位是「音节 id + 1」，0 表示空槽。这里必须原样保留偏移，
+            // 否则 id 0（音节 a）会和空槽撞在一起，后续再减 1 还会整体错位。
+            var copy = new ushort[slots.Length];
+            for (var s = 0; s < slots.Length; s++)
+            {
+                copy[s] = slots[s];
+            }
+
+            readings[i] = copy;
+        }
+
+        return true;
+    }
+
+    /// <summary>按「输入每个字母都是声母」逐个字挑读音；有一字对不上就失败。</summary>
+    private bool ResolveInitials(string query, ushort[][] readings, int[] chosen)
+    {
+        for (var i = 0; i < query.Length; i++)
+        {
+            var wanted = SyllableTable.NormalizeInitial(query[i]);
+            var found = -1;
+            foreach (var raw in readings[i])
+            {
+                if (raw == 0)
+                {
+                    continue;
+                }
+
+                var id = raw - 1;
+                if (id < _table.Count && SyllableTable.NormalizeInitial(_table.GetInitial(id)) == wanted)
+                {
+                    found = id;
+                    break;
+                }
+            }
+
+            if (found < 0)
+            {
+                return false;
+            }
+
+            chosen[i] = found;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// 从左往右用输入逐个吃掉候选的音节，末音节允许只打了一半。
+    /// </summary>
+    /// <remarks>
+    /// 只在全拼切分与简拼都对不上时才走这里，输入长度和字数通常不一致。
+    /// 贪心足够：能走到这一步的输入，第一步可选音节往往是唯一的。
+    /// </remarks>
+    private bool ResolveGreedy(string query, ushort[][] readings, int[] chosen)
+    {
+        var position = 0;
+        for (var i = 0; i < readings.Length; i++)
+        {
+            if (position >= query.Length)
+            {
+                return false; // 输入已经吃完，候选还有字
+            }
+
+            var picked = -1;
+            var consumed = 0;
+            foreach (var raw in readings[i])
+            {
+                if (raw == 0)
+                {
+                    continue;
+                }
+
+                var id = raw - 1;
+                if (id >= _table.Count)
+                {
+                    continue;
+                }
+
+                foreach (var spelling in SpellingsOf(id))
+                {
+                    if (spelling.Length > query.Length - position ||
+                        !query.AsSpan(position, spelling.Length).SequenceEqual(spelling))
+                    {
+                        continue;
+                    }
+
+                    picked = id;
+                    consumed = spelling.Length;
+                    break;
+                }
+
+                if (picked >= 0)
+                {
+                    break;
+                }
+            }
+
+            // 残段只许出现在候选的最后一个音节上，和匹配规则一致。
+            if (picked < 0 && i == readings.Length - 1)
+            {
+                foreach (var raw in readings[i])
+                {
+                    if (raw == 0)
+                    {
+                        continue;
+                    }
+
+                    var id = raw - 1;
+                    if (id >= _table.Count)
+                    {
+                        continue;
+                    }
+
+                    foreach (var spelling in SpellingsOf(id))
+                    {
+                        if (!spelling.AsSpan().StartsWith(query.AsSpan(position), StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+
+                        picked = id;
+                        consumed = query.Length - position;
+                        break;
+                    }
+
+                    if (picked >= 0)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            if (picked < 0)
+            {
+                return false;
+            }
+
+            chosen[i] = picked;
+            position += consumed;
+        }
+
+        return position == query.Length;
+    }
+
+    /// <summary>按音节 id 拼出全拼；模糊音变体统一归一成规范拼写。</summary>
+    private string Compose(int[] ids)
+    {
+        var builder = new StringBuilder(ids.Length * 4);
+        foreach (var id in ids)
+        {
+            builder.Append(_table.GetCanonical(id));
+        }
+
+        return builder.ToString();
+    }
+
+    /// <summary>某个音节可以被写成哪几种拼写；关掉模糊音时只有规范拼写。</summary>
+    private IEnumerable<string> SpellingsOf(int id) =>
+        FuzzyEnabled ? _table.GetSpellings(id) : new[] { _table.GetCanonical(id) };
 
     /// <summary>
     /// 候选驱动的 DP。返回值编码：0 不匹配、1 整词命中、2 末音节未打完、
