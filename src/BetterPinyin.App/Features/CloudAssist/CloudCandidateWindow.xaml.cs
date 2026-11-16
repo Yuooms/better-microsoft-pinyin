@@ -1,6 +1,8 @@
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Media.Effects;
 using BetterPinyin.App.Shell;
 using BetterPinyin.Contracts;
 using BetterPinyin.Core.Settings;
@@ -32,54 +34,39 @@ public sealed class SuggestionRow
 /// 云候选浮窗。
 /// </summary>
 /// <remarks>
-/// 三条硬约束，任何一条被破坏都会直接毁掉输入体验：
+/// 两条硬约束，任何一条被破坏都会直接毁掉输入体验：
 /// <list type="number">
 /// <item>绝不抢焦点：窗口样式带 <c>WS_EX_NOACTIVATE</c>，且 <c>ShowActivated=false</c>。
 /// 一旦抢走焦点，输入法会立刻提交当前组字。</item>
-/// <item>不挡鼠标：卡片样式用 <c>WS_EX_TRANSPARENT</c>；亚克力样式是普通窗口，
-/// 靠 <c>WM_NCHITTEST</c> 返回 <c>HTTRANSPARENT</c> 穿透。</item>
-/// <item>不遮候选条：候选条位于沉浸式 IME 图层，永远在我们上方，只能贴着它显示。</item>
+/// <item>不挡鼠标：窗口样式带 <c>WS_EX_TRANSPARENT</c>，且 <c>IsHitTestVisible=false</c>。</item>
 /// </list>
 /// <para>
-/// 亚克力样式必须是非分层窗口（<c>AllowsTransparency=false</c>），否则 DWM 的模糊不会生效。
-/// WPF 不允许运行时改这个属性，所以样式切换时由外部重建窗口。
+/// 两种样式（<c>Card</c> 纯白卡片、<c>Classic</c> 经典）都是分层窗口 + WPF 自绘：
+/// 圆角、描边、阴影全部由 WPF 处理，不申请 DWM 材质。圆角之外就是真透明，
+/// 不会出现「圆角但圆角外不透明」的硬边；代价是背景必须实色，不能透出桌面。
 /// </para>
 /// </remarks>
 public partial class CloudCandidateWindow : Window
 {
     private const int GapPixels = 6;
-    private const int CornerRadiusDip = 8;
-
-    private readonly bool _acrylic;
 
     /// <summary>创建浮窗。</summary>
-    /// <param name="style">样式：<c>Card</c> 纯白卡片，<c>Acrylic</c> 亚克力。</param>
+    /// <param name="style">样式：<c>Card</c> 纯白卡片，<c>Classic</c> 经典（Win10 输入法风格）。</param>
     public CloudCandidateWindow(string style)
     {
-        PopupStyle = style ?? "Card";
-        _acrylic = string.Equals(PopupStyle, "Acrylic", StringComparison.OrdinalIgnoreCase);
-
-        if (_acrylic)
-        {
-            // 必须赶在句柄创建之前设置。
-            AllowsTransparency = false;
-        }
+        PopupStyle = PopupStyleCatalog.Normalize(style);
 
         InitializeComponent();
 
-        if (_acrylic)
+        if (PopupStyleCatalog.IsClassic(PopupStyle))
         {
-            Background = Brushes.Transparent;
-            Card.Margin = new Thickness(0);
-            Card.Effect = null;
+            ApplyClassicStyle();
         }
 
         SourceInitialized += OnSourceInitialized;
-        ThemeManager.ThemeChanged += OnThemeChanged;
-        Closed += (_, _) => ThemeManager.ThemeChanged -= OnThemeChanged;
     }
 
-    /// <summary>当前样式标识。</summary>
+    /// <summary>当前样式标识（已归一化）。</summary>
     public string PopupStyle { get; }
 
     /// <summary>
@@ -210,77 +197,29 @@ public partial class CloudCandidateWindow : Window
 
     private void OnSourceInitialized(object? sender, EventArgs e)
     {
-        var handle = new WindowInteropHelper(this).Handle;
-        NativeMethods.ApplyNoActivateStyle(handle);
-
-        if (!_acrylic)
-        {
-            return;
-        }
-
-        var result = Backdrop.Apply(this, BackdropMode.Acrylic, ThemeManager.IsDark, isFlyout: true);
-        if (!result.Applied)
-        {
-            // 降级为实心卡片，避免透明窗口直接透出桌面。
-            Background = null;
-            Card.Background = ThemeManager.ResolveBrush("PopupBackgroundBrush");
-            Card.BorderBrush = ThemeManager.ResolveBrush("PopupStrokeBrush");
-            Card.BorderThickness = new Thickness(1);
-            Log.Write("[浮窗] 亚克力不可用，已降级为纯白卡片");
-            return;
-        }
-
-        ApplyGlassCard();
-
-        // 非分层窗口没有 WS_EX_LAYERED 的天然穿透，用命中测试返回 HTTRANSPARENT。
-        if (PresentationSource.FromVisual(this) is HwndSource source)
-        {
-            source.AddHook(NoHitTest);
-        }
+        // 浮窗不能激活：抢走焦点会让输入法立刻提交组字。
+        NativeMethods.ApplyNoActivateStyle(new WindowInteropHelper(this).Handle);
     }
 
-    private void OnThemeChanged(object? sender, EventArgs e)
+    /// <summary>
+    /// 切换为经典样式：Win10 输入法的候选条是直角、实色、阴影很浅。
+    /// </summary>
+    /// <remarks>
+    /// 圆角与阴影只在这一处改，XAML 里的默认值就是纯白卡片。
+    /// 样式切换仍由外部重建窗口（<see cref="CloudAssistFeature.ApplySettings"/>），
+    /// 但两种样式都是分层窗口，重建只是为了换一套参数，没有窗口类型限制。
+    /// </remarks>
+    private void ApplyClassicStyle()
     {
-        if (!_acrylic)
-        {
-            // 卡片模式由 DynamicResource 自动跟随，不需要额外处理。
-            return;
-        }
+        Card.CornerRadius = new CornerRadius(0);
+        Card.Margin = new Thickness(5);
+        Card.Padding = new Thickness(10, 4, 10, 4);
+        Card.Effect = (Effect)FindResource("ClassicShadow");
 
-        var result = Backdrop.Apply(this, BackdropMode.Acrylic, ThemeManager.IsDark, isFlyout: true);
-        if (result.Applied)
-        {
-            ApplyGlassCard();
-            return;
-        }
-
-        // 切主题后材质失败：退回卡片，避免透出桌面。
-        Background = null;
-        Card.Background = ThemeManager.ResolveBrush("PopupBackgroundBrush");
-        Card.BorderBrush = ThemeManager.ResolveBrush("PopupStrokeBrush");
-        Card.BorderThickness = new Thickness(1);
-    }
-
-    /// <summary>亚克力模式下卡片本身不画底色，只留一条描边把内容圈住。</summary>
-    private void ApplyGlassCard()
-    {
-        Card.Background = Brushes.Transparent;
-        Card.BorderBrush = ThemeManager.ResolveBrush("PopupStrokeBrush");
-        Card.BorderThickness = new Thickness(1);
-    }
-
-    private static IntPtr NoHitTest(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
-    {
-        const int WM_NCHITTEST = 0x0084;
-        const int HTTRANSPARENT = -1;
-
-        if (message != WM_NCHITTEST)
-        {
-            return IntPtr.Zero;
-        }
-
-        handled = true;
-        return new IntPtr(HTTRANSPARENT);
+        // 微软拼音候选条不是纯白：浅色实测 #F5F5F5、底边 #DCDCDC，
+        // 用纯白会显得浮窗比输入法本身更亮。两个引用都保持动态，切主题时跟着字典走。
+        Card.SetResourceReference(Border.BackgroundProperty, "PopupClassicBackgroundBrush");
+        Card.SetResourceReference(Border.BorderBrushProperty, "PopupClassicStrokeBrush");
     }
 
     private void Position(CandidateWindowSnapshot snapshot, string placement)
@@ -368,11 +307,6 @@ public partial class CloudCandidateWindow : Window
             width,
             height,
             NativeMethods.SWP_NOACTIVATE | NativeMethods.SWP_SHOWWINDOW);
-
-        if (_acrylic)
-        {
-            Backdrop.ApplyRoundedRegion(handle, width, height, (int)Math.Round(CornerRadiusDip * scale));
-        }
     }
 
     private static double GetDpiScale(IntPtr handle)

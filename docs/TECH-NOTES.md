@@ -138,21 +138,26 @@ SendInput(Esc)
 
 另外，钩子回调里绝对不能做 UIA 或网络：映射表在查询完成时就构建好，钩子侧只做一次数组线性查找（最多 5 项）。
 
-## 十二、亚克力：Win10 与 Win11 不是同一套 API
+## 十二、候选浮窗：为什么放弃亚克力
 
-| 系统 | 方式 | 说明 |
+浮窗曾经有两套材质：Win11 22621+ 用 `DWMWA_SYSTEMBACKDROP_TYPE = DWMSBT_TRANSIENTWINDOW`，
+Win10 1803+ 用 `SetWindowCompositionAttribute(ACCENT_ENABLE_ACRYLICBLURBEHIND)`。
+两条路都要求窗口不画不透明背景，并且**必须是非分层窗口**——`AllowsTransparency=True`
+的窗口吃不到 DWM 模糊，点击穿透只能改由 `WM_NCHITTEST` 返回 `HTTRANSPARENT`。
+
+实际效果并不稳定：Win10 的 accent 路径在部分机器上直接失败，代码退回实色卡片，
+于是窗口变成「有圆角、但圆角外不透明」——系统圆角与 WPF 描边对不齐，露出一圈硬边，
+比纯实色更难看。浮窗又不需要拖动，亚克力带来的那点通透感不值得这份不确定性。
+
+现在的两种样式都走分层窗口 + WPF 自绘，不再申请系统材质：
+
+| 样式 | 形状 | 默认系统 |
 |---|---|---|
-| Windows 11 22621+ | `DwmSetWindowAttribute(DWMWA_SYSTEMBACKDROP_TYPE, DWMSBT_TRANSIENTWINDOW)` | 公开接口，也就是系统「设置」用的那套预设 |
-| Windows 10 1803+ | `SetWindowCompositionAttribute(ACCENT_ENABLE_ACRYLICBLURBEHIND)` | 未公开，但系统自身的设置、开始菜单用的也是它 |
+| 纯白卡片（`Card`） | 8px 圆角 + 大软阴影 | Windows 11 |
+| 经典（`Classic`） | 直角、`#F5F5F5` 底色（与候选条同色）+ 浅阴影 | Windows 10 |
 
-两者都要求窗口**自己不要画不透明背景**：把 `CompositionTarget.BackgroundColor` 置为透明，并 `DwmExtendFrameIntoClientArea(-1)`，否则模糊会被 WPF 的绘制盖住。
-
-两个容易踩的点：
-
-- **分层窗口（`AllowsTransparency=True`）吃不到 DWM 模糊**。云浮窗的「亚克力」样式因此必须是非分层窗口，点击穿透改由 `WM_NCHITTEST` 返回 `HTTRANSPARENT` 实现；样式切换时只能重建窗口，WPF 不允许运行时改这个属性。
-- **分层要跟系统一致**：系统「设置」只让侧边栏透出模糊，内容区接近不透明。整窗都用低透明度会让长文本在彩色壁纸上难以阅读。本项目的设置窗口采用同样的分层：导航 `#1FFFFFFF`，内容区 `#F7FFFFFF`。
-
-失败时一律恢复实色背景并记日志——宁可看起来普通，也不要出现一块黑底或直接透出桌面。
+圆角之外是真透明，阴影也由 WPF 完整绘制，不会再出现「圆角外不透明」。代价是背景必须实色，
+不能透出桌面。旧配置里的 `Acrylic` 会在读取时映射到 `Classic`，用户不用重新选一次。
 
 ## 十三、WPF 里怎么"用系统控件"
 
@@ -212,10 +217,11 @@ dictionaries[0] = new ResourceDictionary { Source = new Uri("Themes/Colors.Dark.
   因此 `ThemeManager.Validate()` 在启动时把必需键逐个 `TryFindResource` 一遍，缺了就写日志。
 
 深色下的两个取值细节：强调色用 `#60CDFF`（浅色的 `#005FB8` 在深色底上几乎看不见）；
-亚克力着色用 `#99000000`（60% 黑），浅色的 45% 白在深色壁纸上会显得发灰。
+候选浮窗底色用 `#2B2B2B`，与 Win10 深色输入法的候选条一致。
 
-标题栏要单独调 `DWMWA_USE_IMMERSIVE_DARK_MODE`（build ≥ 18985 用序号 20，否则 19），
-并在之后补一次 `SetWindowPos(SWP_FRAMECHANGED)`，否则部分 19041/19042 不会重绘非客户区。
+标题栏的深浅由 WPF-UI 的 `TitleBar` 跟随主题字典，不需要自己调 `DWMWA_USE_IMMERSIVE_DARK_MODE`；
+早期自绘标题栏时那段代码（含 build ≥ 18985 的属性序号差异与一次 `SWP_FRAMECHANGED`）
+已随 `Backdrop.cs` 的精简一起删除。
 
 ## 十五、Win10 亚克力为什么会让拖动卡住
 
@@ -233,13 +239,9 @@ dictionaries[0] = new ResourceDictionary { Source = new Uri("Themes/Colors.Dark.
 Win10 上是普通不透明窗口（`WindowBackdropType=None`），拖动走 DWM 的常规优化；
 后来设置窗口的 Mica 就是在这条路线上做的，开关在「外观 → 窗口材质」，实现与坑见第二十二节。
 
-`Backdrop.cs` 仍保留给候选浮窗：它只覆盖一个小窗口、不需要拖动，
-`ACCENT_ENABLE_ACRYLICBLURBEHIND` 的逐帧代价可以接受；且浮窗是无焦点窗口，
-WPF-UI 接管不了。失败回滚逻辑（还原 `Window.Background`、`BackgroundColor` 与
-`-1` 的边框扩展）继续有效。
-
-失败回滚也必须完整：只还原 `Window.Background` 而留下透明的 `BackgroundColor`
-与 `-1` 的边框扩展，会得到"透明但没模糊"的窗口，直接透出桌面。
+候选浮窗也不再走亚克力：它虽然不需要拖动，但 Win10 的 accent 在部分机器上会失败，
+退回实色后反而出现「圆角外不透明」的硬边。现在 `Backdrop.cs` 只剩能力探测，
+两个浮窗样式都由 WPF 分层窗口自绘，见第十二节。
 
 ## 十六、采纳流程为什么必须离开钩子线程
 

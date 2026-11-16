@@ -171,8 +171,8 @@ src/BetterPinyin.App/Shell/
    设置窗口则用 WPF-UI 的 `ThemeResource` / `DynamicResource`，由主题字典驱动。
 2. **`Controls.xaml` 里不许出现跨字典的 `StaticResource`**，解析期找不到键会直接抛异常。
 3. **不要让 WPF-UI 接管候选浮窗**。浮窗是无焦点、点击穿透的透明窗口，
-   WPF-UI 的隐式 `Window` 样式会覆盖 `AllowsTransparency`；浮窗的材质仍走
-   `Backdrop.cs`（Win11 DWM / Win10 `SetWindowCompositionAttribute`）。
+   WPF-UI 的隐式 `Window` 样式会覆盖 `AllowsTransparency`；浮窗的两种样式
+   （纯白卡片 / 经典）都由 WPF 自绘，不依赖系统材质。
 
 ## 配置与数据
 

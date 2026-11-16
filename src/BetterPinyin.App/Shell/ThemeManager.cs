@@ -33,7 +33,7 @@ internal static class ThemeManager
         "WindowGlassBrush", "ShellGlassBrush", "ContentGlassBrush",
         "SuccessBrush", "WarningBrush", "ErrorBrush",
         "PopupBackgroundBrush", "PopupStrokeBrush", "PopupKeyChipBrush",
-        "AcrylicTint",
+        "PopupClassicBackgroundBrush", "PopupClassicStrokeBrush",
     };
 
     private static bool _initialized;

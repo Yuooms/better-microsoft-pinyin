@@ -279,10 +279,11 @@
                         </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
-                                                Header="浮窗样式">
+                                                Header="浮窗样式"
+                                                ui:SettingRow.Description="纯白卡片是圆角实色，贴近 Windows 11 输入法；经典是直角实色，贴近 Windows 10 输入法。">
                             <ComboBox x:Name="PopupStyleComboBox" Width="160">
                                 <ComboBoxItem Content="纯白卡片" Tag="Card" />
-                                <ComboBoxItem Content="亚克力" Tag="Acrylic" />
+                                <ComboBoxItem Content="经典" Tag="Classic" />
                             </ComboBox>
                         </HeaderedContentControl>
 

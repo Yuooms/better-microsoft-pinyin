@@ -1251,12 +1251,17 @@ internal static class CoreTests
             Check.Equal("sogou", CloudSourceCatalog.Normalize("SOGOU"), "来源取值应忽略大小写");
             Check.Equal("bing", CloudSourceCatalog.Normalize("baidu"), "未知来源应回落到 Bing");
             Check.Equal("bing", CloudSourceCatalog.Normalize(null), "空来源应回落到 Bing");
+            Check.Equal(PopupStyleCatalog.SystemDefault, defaults.PopupStyle, "浮窗样式默认跟随系统");
+            Check.True(defaults.PopupStyleDefaultApplied, "新配置不应再触发样式迁移");
+            Check.Equal(PopupStyleCatalog.Classic, PopupStyleCatalog.Normalize("Acrylic"), "旧亚克力配置应迁移到经典");
+            Check.Equal(PopupStyleCatalog.SystemDefault, PopupStyleCatalog.Normalize("Nope"), "未知样式应回落到系统默认");
             Check.True(store.LastError is null, "文件不存在时不应报错");
 
             defaults.StrictAcceptKey = "Semicolon";
             defaults.ExtendedMaxCount = 2;
             defaults.OverlayPlacement = "Left";
             defaults.PhraseWriteExtended = true;
+            defaults.PopupStyle = PopupStyleCatalog.Card;
             defaults.BlockedProcesses.Add("mstsc");
             Check.True(store.Save(defaults), "保存应成功");
 
@@ -1264,14 +1269,27 @@ internal static class CoreTests
             Check.Equal("Semicolon", reloaded.StrictAcceptKey, "采纳键应持久化");
             Check.Equal(2, reloaded.ExtendedMaxCount, "扩展条数应持久化");
             Check.Equal("Left", reloaded.OverlayPlacement, "浮窗位置应持久化");
+            Check.Equal(PopupStyleCatalog.Card, reloaded.PopupStyle, "显式选择的浮窗样式应持久化");
             Check.True(reloaded.PhraseWriteExtended, "扩展词写入开关应持久化");
             Check.Contains(reloaded.BlockedProcesses, "mstsc", "黑名单应持久化");
 
             // 老配置里没有 StrictProvider：必须读到默认值，且不影响其它字段。
-            File.WriteAllText(path, "{\"StrictEnabled\":false}");
+            File.WriteAllText(path, "{\"StrictEnabled\":false,\"PopupStyle\":\"Acrylic\"}");
             var legacy = new SettingsStore(path).Load();
             Check.Equal("bing", legacy.StrictProvider, "老配置的来源应回落到 Bing");
+            Check.Equal(PopupStyleCatalog.Classic, legacy.PopupStyle, "老配置的亚克力应迁移到经典");
+            Check.True(legacy.PopupStyleDefaultApplied, "老配置读取后应置位迁移标记");
             Check.False(legacy.StrictEnabled, "老配置的其它字段仍应正常读取");
+
+            // 旧版本的默认值就是 Card：Win10 升级后应跟着系统默认走经典。
+            File.WriteAllText(path, "{\"PopupStyle\":\"Card\"}");
+            var legacyCard = new SettingsStore(path).Load();
+            Check.Equal(PopupStyleCatalog.SystemDefault, legacyCard.PopupStyle, "旧默认卡片应按系统默认迁移");
+
+            // 迁移后用户再主动选纯白卡片，保存过的标记应让它保持，不被反复改回经典。
+            legacyCard.PopupStyle = PopupStyleCatalog.Card;
+            Check.True(new SettingsStore(path).Save(legacyCard), "迁移后的配置应可保存");
+            Check.Equal(PopupStyleCatalog.Card, new SettingsStore(path).Load().PopupStyle, "迁移后显式选择卡片应保持");
 
             File.WriteAllText(path, "{ 这不是合法 JSON");
             var recovered = new SettingsStore(path).Load();

@@ -55,7 +55,8 @@
     <SolidColorBrush x:Key="PopupStrokeBrush" Color="#3A3A3A" />
     <SolidColorBrush x:Key="PopupKeyChipBrush" Color="#383838" />
 
-    <!-- 亚克力着色：深色下压得更实，否则壁纸颜色会透上来影响 12px 说明文字 -->
-    <Color x:Key="AcrylicTint">#99000000</Color>
+    <!-- 经典浮窗：与 Win10 深色候选条同色 -->
+    <SolidColorBrush x:Key="PopupClassicBackgroundBrush" Color="#2B2B2B" />
+    <SolidColorBrush x:Key="PopupClassicStrokeBrush" Color="#3A3A3A" />
 
 </ResourceDictionary>

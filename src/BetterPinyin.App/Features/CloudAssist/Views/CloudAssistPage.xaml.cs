@@ -195,7 +195,7 @@ public partial class CloudAssistPage : Page
         SelectByTag(ExtendedCountComboBox, Settings.ExtendedMaxCount.ToString(CultureInfo.InvariantCulture));
         SelectByTag(ExtendedKeyModeComboBox, Settings.ExtendedKeyMode);
         SelectByTag(PlacementComboBox, Settings.OverlayPlacement);
-        SelectByTag(PopupStyleComboBox, Settings.PopupStyle);
+        SelectByTag(PopupStyleComboBox, PopupStyleCatalog.Normalize(Settings.PopupStyle));
         SelectByTag(EnglishCommitComboBox, Settings.EnglishModeCommit);
 
         LoadExtendedKeys();
@@ -249,7 +249,8 @@ public partial class CloudAssistPage : Page
         Settings.ExtendedKeys = KeyNames.SerializeExtendedKeys(_extendedKeys.Select(item => item.VirtualKey));
 
         Settings.OverlayPlacement = TagOf(PlacementComboBox, "Below");
-        Settings.PopupStyle = TagOf(PopupStyleComboBox, "Card");
+        Settings.PopupStyle = PopupStyleCatalog.Normalize(
+            TagOf(PopupStyleComboBox, PopupStyleCatalog.SystemDefault));
         Settings.ShowCloudIcon = ShowCloudIconCheckBox.IsChecked == true;
 
         Settings.EnglishModeAssistEnabled = EnglishCheckBox.IsChecked == true;
@@ -309,6 +310,8 @@ public partial class CloudAssistPage : Page
         Settings.ExtendedKeys = defaults.ExtendedKeys;
         Settings.OverlayPlacement = defaults.OverlayPlacement;
         Settings.PopupStyle = defaults.PopupStyle;
+        // 恢复默认时样式已经按系统取好，标记为已应用，避免下次启动再走一次迁移。
+        Settings.PopupStyleDefaultApplied = true;
         Settings.ShowCloudIcon = defaults.ShowCloudIcon;
         Settings.EnglishModeAssistEnabled = defaults.EnglishModeAssistEnabled;
         Settings.EnglishModeCommit = defaults.EnglishModeCommit;

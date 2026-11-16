@@ -57,7 +57,8 @@
     <SolidColorBrush x:Key="PopupStrokeBrush" Color="#D8DDE5" />
     <SolidColorBrush x:Key="PopupKeyChipBrush" Color="#F1F3F6" />
 
-    <!-- 亚克力着色（Win10 路径用；Win11 由系统按主题着色，不读这个值） -->
-    <Color x:Key="AcrylicTint">#73FFFFFF</Color>
+    <!-- 经典浮窗：与 Win10 微软拼音候选条同色（候选取色实测 #F5F5F5，底边 #DCDCDC） -->
+    <SolidColorBrush x:Key="PopupClassicBackgroundBrush" Color="#F5F5F5" />
+    <SolidColorBrush x:Key="PopupClassicStrokeBrush" Color="#DCDCDC" />
 
 </ResourceDictionary>

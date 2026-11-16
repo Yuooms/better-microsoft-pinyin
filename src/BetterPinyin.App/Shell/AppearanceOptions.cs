@@ -21,9 +21,6 @@ internal enum BackdropMode
 
     /// <summary>始终纯色。</summary>
     Solid,
-
-    /// <summary>强制尝试亚克力（Win10 上可能导致拖动掉帧）。</summary>
-    Acrylic,
 }
 
 /// <summary>
@@ -68,18 +65,4 @@ internal static class AppearanceOptions
     /// <returns>配置字符串。</returns>
     public static string ToSettingValue(BackdropMode mode) =>
         mode == BackdropMode.Solid ? "Solid" : "Auto";
-
-    /// <summary>当前是否应该启用玻璃效果。</summary>
-    /// <param name="mode">背景策略。</param>
-    /// <returns>是否启用。</returns>
-    /// <remarks>
-    /// Win11 的材质由合成器绘制，拖动时不重算，代价很低；Win10 的亚克力是未公开实现，
-    /// 每帧都要对整窗重新模糊，拖动会明显掉帧，所以自动模式下只在 Win11 启用。
-    /// </remarks>
-    public static bool ShouldUseGlass(BackdropMode mode) => mode switch
-    {
-        BackdropMode.Solid => false,
-        BackdropMode.Acrylic => true,
-        _ => Environment.OSVersion.Version.Build >= 22000,
-    };
 }

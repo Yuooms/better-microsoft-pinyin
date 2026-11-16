@@ -23,6 +23,22 @@
             Style="{x:Null}" 是首选；这里再放一个本地空样式，防止某些版本上它被忽略。
         -->
         <Style TargetType="{x:Type Window}" />
+
+        <!-- 纯白卡片：圆角 + 大软阴影，贴近 Win11 输入法的候选条。 -->
+        <DropShadowEffect x:Key="CardShadow"
+                          BlurRadius="14"
+                          ShadowDepth="2"
+                          Direction="270"
+                          Opacity="0.16"
+                          Color="#000000" />
+
+        <!-- 经典：直角 + 更小更实的阴影，贴近 Win10 输入法的候选条。 -->
+        <DropShadowEffect x:Key="ClassicShadow"
+                          BlurRadius="8"
+                          ShadowDepth="2"
+                          Direction="270"
+                          Opacity="0.14"
+                          Color="#000000" />
     </Window.Resources>
 
     <!--
@@ -30,6 +46,10 @@
         1. 绝不抢焦点：WS_EX_NOACTIVATE + ShowActivated=False。
         2. 不挡鼠标：WS_EX_TRANSPARENT + IsHitTestVisible=False。
         3. 不遮候选条：候选条在沉浸式 IME 图层，永远在我们上方，只能贴边显示。
+
+        两种样式都走分层窗口（AllowsTransparency=True），圆角与阴影完全由 WPF 绘制，
+        不再申请 DWM 材质——非分层窗口的系统圆角和 WPF 描边对不齐时，
+        会露出「圆角但圆角外不透明」的硬边，观感比实色更差。
     -->
     <Border x:Name="Card"
             Background="{DynamicResource PopupBackgroundBrush}"
@@ -38,10 +58,8 @@
             CornerRadius="8"
             Padding="12,6"
             Margin="6"
-            MaxWidth="380">
-        <Border.Effect>
-            <DropShadowEffect BlurRadius="14" ShadowDepth="2" Direction="270" Opacity="0.16" Color="#000000" />
-        </Border.Effect>
+            MaxWidth="380"
+            Effect="{StaticResource CardShadow}">
 
         <ItemsControl x:Name="Rows" IsHitTestVisible="False">
             <ItemsControl.ItemTemplate>

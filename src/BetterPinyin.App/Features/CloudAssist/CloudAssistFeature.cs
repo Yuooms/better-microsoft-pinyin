@@ -167,9 +167,13 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
     {
         _controller.ApplySettings();
 
-        // 分层窗口与普通窗口不能运行时互转，样式变了只能换一个窗口。
+        // 分层窗口可以运行时换参数，但阴影/圆角都在构造时设一次，
+        // 样式变了仍换一个窗口最省事；比较前先归一化，旧配置里的 Acrylic 也能对上。
         if (_window is null ||
-            string.Equals(_window.PopupStyle, _settings.PopupStyle, StringComparison.OrdinalIgnoreCase))
+            string.Equals(
+                _window.PopupStyle,
+                PopupStyleCatalog.Normalize(_settings.PopupStyle),
+                StringComparison.OrdinalIgnoreCase))
         {
             return;
         }

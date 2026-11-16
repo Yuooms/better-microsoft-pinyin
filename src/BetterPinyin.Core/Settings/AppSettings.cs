@@ -76,8 +76,24 @@ public sealed class AppSettings
     /// <summary>浮窗位置：<c>Below</c> 候选窗下方，<c>Left</c> 候选窗左侧。</summary>
     public string OverlayPlacement { get; set; } = "Below";
 
-    /// <summary>浮窗样式：<c>Card</c> 纯白卡片，<c>Acrylic</c> 亚克力。</summary>
-    public string PopupStyle { get; set; } = "Card";
+    /// <summary>
+    /// 浮窗样式：<c>Card</c> 纯白卡片（Win11 输入法风格），<c>Classic</c> 经典（Win10 输入法风格）。
+    /// </summary>
+    /// <remarks>
+    /// 默认值按系统给：Windows 11 用纯白卡片，Windows 10 用经典。
+    /// 旧配置里的 <c>Acrylic</c> 由 <see cref="PopupStyleCatalog.Normalize"/> 映射到 <c>Classic</c>。
+    /// </remarks>
+    public string PopupStyle { get; set; } = PopupStyleCatalog.SystemDefault;
+
+    /// <summary>
+    /// 浮窗样式是否已经按系统默认值迁移过。
+    /// </summary>
+    /// <remarks>
+    /// 旧版本只有一个默认值 <c>Card</c>，配置里无法区分「默认」和「用户主动选择」。
+    /// 升级到「Win10 默认经典」时只迁移一次并置位：之后用户在设置里选纯白卡片并保存，
+    /// 不会被再次改回经典。
+    /// </remarks>
+    public bool PopupStyleDefaultApplied { get; set; }
 
     /// <summary>是否把用户词库的命中显示在浮窗里。</summary>
     public bool WordbookEnabled { get; set; } = true;
@@ -125,8 +141,8 @@ public sealed class AppSettings
     /// <c>Solid</c> 始终纯色。
     /// </summary>
     /// <remarks>
-    /// 只影响设置窗口。候选浮窗始终按自己的 <see cref="PopupStyle"/> 走亚克力或实色，
-    /// 因为它贴在候选条旁边，纯色会显得比输入法本身更"重"。
+    /// 只影响设置窗口。候选浮窗有自己的 <see cref="PopupStyle"/>，两种样式都是实色，
+    /// 不参与这里的材质策略。
     /// </remarks>
     public string BackdropMode { get; set; } = "Auto";
 
@@ -256,22 +272,43 @@ public sealed class SettingsStore
         {
             if (!File.Exists(_filePath))
             {
-                return new AppSettings();
+                // 新配置直接用系统默认样式，标记已应用，之后保存不会触发迁移。
+                return new AppSettings { PopupStyleDefaultApplied = true };
             }
 
             var json = File.ReadAllText(_filePath);
             if (string.IsNullOrWhiteSpace(json))
             {
-                return new AppSettings();
+                return new AppSettings { PopupStyleDefaultApplied = true };
             }
 
-            return JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions) ?? new AppSettings();
+            var settings = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions)
+                ?? new AppSettings { PopupStyleDefaultApplied = true };
+
+            // 旧配置只有 Card / Acrylic 两个值；Acrylic 已被经典样式取代。
+            // 归一化放在读取处，保存路径不受影响，用户在设置里选什么就存什么。
+            settings.PopupStyle = PopupStyleCatalog.Normalize(settings.PopupStyle);
+
+            // 旧版本的默认值就是 Card，和用户主动选择无法区分。升级后按系统默认走一次：
+            // Win10 改成经典、Win11 保持纯白卡片。Acrylic 是显式选择，Normalize 已映射到
+            // 经典，这里不再覆盖；迁移标记会随下一次保存写进配置。
+            if (!settings.PopupStyleDefaultApplied)
+            {
+                if (!string.Equals(settings.PopupStyle, PopupStyleCatalog.Classic, StringComparison.OrdinalIgnoreCase))
+                {
+                    settings.PopupStyle = PopupStyleCatalog.SystemDefault;
+                }
+
+                settings.PopupStyleDefaultApplied = true;
+            }
+
+            return settings;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
             // 配置损坏不能让程序起不来，退回默认值并把原因留给诊断页。
             LastError = $"{ex.GetType().Name}: {ex.Message}";
-            return new AppSettings();
+            return new AppSettings { PopupStyleDefaultApplied = true };
         }
     }
 
