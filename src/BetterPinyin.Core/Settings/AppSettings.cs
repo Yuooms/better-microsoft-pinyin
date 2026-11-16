@@ -185,6 +185,16 @@ public sealed class AppSettings
     public bool StartWithWindows { get; set; }
 
     /// <summary>
+    /// 开机启动是否以管理员权限运行。
+    /// </summary>
+    /// <remarks>
+    /// 开启后登记方式从注册表 Run 键换成计划任务（<c>RunLevel=HighestAvailable</c>）：
+    /// 只有计划任务能在登录时静默提权，Run 键拉起的进程永远是普通权限。
+    /// 老配置没有这个字段时按 false 处理，行为与升级前一致。
+    /// </remarks>
+    public bool StartWithWindowsElevated { get; set; }
+
+    /// <summary>
     /// 是否在启动时检查更新。
     /// </summary>
     /// <remarks>

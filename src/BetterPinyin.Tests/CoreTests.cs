@@ -87,26 +87,27 @@ internal static class CoreTests
 {
     public static void RunAll()
     {
-        Run("[1/20] Bing 响应解析", Parser);
-        Run("[2/20] 候选清洗", Sanitizer);
-        Run("[3/20] 拼音匹配", Matcher);
-        Run("[4/20] 严格 / 扩展分区", Selector);
-        Run("[5/20] 排序合并（旧链路）", Ranker);
-        Run("[6/20] 设置持久化", Settings);
-        Run("[7/20] 词库词表", Catalog);
-        Run("[8/20] 用户词库", Wordbook);
-        Run("[9/20] 自学习词库", Learning);
-        Run("[10/20] 自学习词库删除", LearningDelete);
-        Run("[11/20] 自学习词库备份", LearningBackup);
-        Run("[12/20] 开机启动登记", StartupRegistrationTest);
-        Run("[13/20] 输入统计", Statistics);
-        Run("[14/20] 组字状态机", CompositionTrackerStates);
-        Run("[15/20] 版本检查与更新脚本", Updates);
-        Run("[16/20] 搜狗组帧与解帧", Sogou);
-        Run("[17/20] 搜狗客户端（桩 HTTP）", SogouClient);
-        Run("[18/20] 双源合并", SelectorCombine);
-        Run("[19/20] Bing 端点与超时", BingEndpoints);
-        Run("[20/20] 进程完整性级别", Integrity);
+        Run("[1/21] Bing 响应解析", Parser);
+        Run("[2/21] 候选清洗", Sanitizer);
+        Run("[3/21] 拼音匹配", Matcher);
+        Run("[4/21] 严格 / 扩展分区", Selector);
+        Run("[5/21] 排序合并（旧链路）", Ranker);
+        Run("[6/21] 设置持久化", Settings);
+        Run("[7/21] 词库词表", Catalog);
+        Run("[8/21] 用户词库", Wordbook);
+        Run("[9/21] 自学习词库", Learning);
+        Run("[10/21] 自学习词库删除", LearningDelete);
+        Run("[11/21] 自学习词库备份", LearningBackup);
+        Run("[12/21] 开机启动登记", StartupRegistrationTest);
+        Run("[13/21] 输入统计", Statistics);
+        Run("[14/21] 组字状态机", CompositionTrackerStates);
+        Run("[15/21] 版本检查与更新脚本", Updates);
+        Run("[16/21] 搜狗组帧与解帧", Sogou);
+        Run("[17/21] 搜狗客户端（桩 HTTP）", SogouClient);
+        Run("[18/21] 双源合并", SelectorCombine);
+        Run("[19/21] Bing 端点与超时", BingEndpoints);
+        Run("[20/21] 进程完整性级别", Integrity);
+        Run("[21/21] 开机启动任务（管理员权限）", ElevatedStartup);
     }
 
     /// <summary>逐组执行，一组崩掉不影响其它组出结论。</summary>
@@ -1525,6 +1526,75 @@ internal static class CoreTests
             level is IntegrityLevel.Low or IntegrityLevel.Medium or IntegrityLevel.High or IntegrityLevel.System,
             $"本进程级别应可读，实际 {level}");
         Check.True(!string.IsNullOrEmpty(ProcessIntegrity.Describe(level)), "级别应有中文说明");
+    }
+
+    /// <summary>开机启动的计划任务变体：只验纯函数与文件判定，不真的登记任务。</summary>
+    /// <remarks>
+    /// 登记与删除都要管理员权限，测试里不能弹 UAC，所以固化成两条：
+    /// 「拼出来的任务定义对不对」和「已有任务读不读得懂」。这两处写错的表现都很隐蔽——
+    /// 登录时以普通权限启动（等于没开这个开关），或者任务根本不启动。
+    /// </remarks>
+    private static void ElevatedStartup()
+    {
+        const string exe = @"C:\Program Files\Better 微软拼音\BetterMicrosoftPinyin.exe";
+        var xml = ElevatedStartupTask.BuildTaskXml(exe, "--autostart", @"DESKTOP-1\Yuki");
+
+        Check.True(xml.Contains("<RunLevel>HighestAvailable</RunLevel>"), "任务必须以最高权限运行");
+        Check.True(xml.Contains("<LogonType>InteractiveToken</LogonType>"), "必须用交互令牌，否则没有桌面与托盘");
+        Check.True(
+            xml.Contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>"),
+            "不能限制运行时长：默认 72 小时会把常驻程序硬停");
+        Check.True(
+            xml.Contains("<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"),
+            "笔记本用电池时也要启动");
+        Check.True(
+            xml.Contains("<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>"),
+            "拔掉电源不能被停掉");
+        Check.True(
+            xml.Contains("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>"),
+            "不应重复启动");
+        Check.True(xml.Contains($"<Command>{exe}</Command>"), "命令是不带引号的路径");
+        Check.True(xml.Contains("<Arguments>--autostart</Arguments>"), "参数应为 --autostart");
+        Check.True(xml.Contains(@"<UserId>DESKTOP-1\Yuki</UserId>"), "任务应归属当前用户");
+        Check.True(xml.Contains("encoding=\"UTF-16\""), "声明 UTF-16：schtasks 只接受这种编码");
+
+        // 路径里的 & 不转义会得到一个坏 XML，schtasks 直接拒绝，而且是"创建失败"这种笼统报错。
+        var escaped = ElevatedStartupTask.BuildTaskXml(@"C:\A & B\x.exe", "--autostart", "u");
+        Check.True(
+            escaped.Contains("<Command>C:\\A &amp; B\\x.exe</Command>"),
+            "路径中的 & 必须转义");
+
+        // 往返：自己拼的任务定义自己要能读懂，这是"写完后重新读一遍确认登记成功"的前提。
+        Check.True(ElevatedStartupTask.TryParseDefinition(xml, out var definition), "生成的 XML 应可解析");
+        Check.Equal(exe, definition.Command, "解析出的命令");
+        Check.Equal("--autostart", definition.Arguments, "解析出的参数");
+        Check.True(definition.RunsAsAdmin, "运行级别应识别为提权");
+
+        Check.False(
+            ElevatedStartupTask.TryParseDefinition("<Task><Actions /></Task>", out _),
+            "没有 Command 的任务应判为无效");
+        Check.False(ElevatedStartupTask.TryParseDefinition("{ 这不是 XML", out _), "坏 XML 不应抛异常");
+        Check.False(ElevatedStartupTask.TryParseDefinition(string.Empty, out _), "空内容应判为无效");
+        Check.False(ElevatedStartupTask.TryParseDefinition(null, out _), "null 应判为无效");
+
+        // 「开关显示已开启，但任务其实没提权」要有判据，否则这个功能的失败是静默的。
+        var plain = xml.Replace("HighestAvailable", "LeastPrivilege", StringComparison.Ordinal);
+        Check.True(ElevatedStartupTask.TryParseDefinition(plain, out var plainDefinition), "普通权限任务仍可解析");
+        Check.False(plainDefinition.RunsAsAdmin, "LeastPrivilege 不应被当成提权");
+
+        Check.Equal(
+            "/Create /TN \"BetterMicrosoftPinyin\" /XML \"C:\\Temp\\t.xml\" /F",
+            ElevatedStartupTask.BuildCreateArguments("BetterMicrosoftPinyin", @"C:\Temp\t.xml"),
+            "创建任务的参数");
+        Check.Equal(
+            "/Delete /TN \"BetterMicrosoftPinyin\" /F",
+            ElevatedStartupTask.BuildDeleteArguments("BetterMicrosoftPinyin"),
+            "删除任务的参数");
+
+        // 不存在的任务名只读不写：应报「未登记」，既不抛异常也不去建任务。
+        var absent = new ElevatedStartupTask(exe, "--autostart", $"BetterPinyin.Tests.{Guid.NewGuid():N}");
+        Check.True(absent.TryProbe(out var state, out var error), $"读取不存在的任务应成功：{error}");
+        Check.False(state.Registered, "不存在的任务应判为未登记");
     }
 
     /// <summary>固定返回预设响应的 HTTP 桩，用来在不联网的情况下验证请求形状。</summary>

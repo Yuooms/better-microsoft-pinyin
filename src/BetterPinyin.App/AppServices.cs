@@ -62,6 +62,9 @@ internal static class AppServices
     /// <summary>当前用户的开机启动登记。</summary>
     public static StartupRegistration Startup { get; } = CreateStartupRegistration();
 
+    /// <summary>开机启动的提权变体：一个以最高权限运行的登录计划任务。</summary>
+    public static ElevatedStartupTask StartupTask { get; } = CreateStartupTask();
+
     /// <summary>版本检查与自更新（「关于」页与启动时的后台检查共用）。</summary>
     public static UpdateService Updates { get; } = new(Http.Client);
 
@@ -110,8 +113,15 @@ internal static class AppServices
     /// 按当前进程路径重写一遍。
     /// </summary>
     /// <remarks>
-    /// 只在配置为「已开启」时动注册表，绝不擅自把用户没开的功能打开。
+    /// <para>
+    /// 只在配置为「已开启」时动注册表/任务，绝不擅自把用户没开的功能打开。
     /// 校验/写入失败只记日志：注册表被组策略锁住时，程序本身仍要能正常启动。
+    /// </para>
+    /// <para>
+    /// 提权模式下的任务没法在启动时静默重建——重启任务需要 UAC，而开机时没人能点。
+    /// 所以那条路只做检查：任务被外部删掉就同步关闭配置，指向旧位置只记日志，
+    /// 由常规页提示用户重开一次。
+    /// </para>
     /// </remarks>
     public static void EnsureStartupRegistration()
     {
@@ -120,6 +130,18 @@ internal static class AppServices
             return;
         }
 
+        if (Settings.StartWithWindowsElevated)
+        {
+            EnsureElevatedStartupTask();
+        }
+        else
+        {
+            EnsureRunKeyStartup();
+        }
+    }
+
+    private static void EnsureRunKeyStartup()
+    {
         if (!Startup.TryProbe(out var state, out var probeError))
         {
             Log.Write($"读取开机启动项失败：{probeError}");
@@ -150,15 +172,60 @@ internal static class AppServices
         }
     }
 
+    private static void EnsureElevatedStartupTask()
+    {
+        if (!StartupTask.TryProbe(out var state, out var probeError))
+        {
+            // 文件存在但读不懂时同样落到这里：保持配置不动，只记录。
+            Log.Write($"读取开机启动任务失败：{probeError}");
+            return;
+        }
+
+        if (!state.Registered)
+        {
+            Settings.StartWithWindows = false;
+            Settings.StartWithWindowsElevated = false;
+            SaveSettings();
+            Log.Write("开机启动任务已不存在，配置同步为关闭");
+            return;
+        }
+
+        if (!state.RunsAsAdmin)
+        {
+            Log.Write("开机启动任务存在，但没有登记为最高权限运行，云联想在管理员程序中会失效");
+        }
+
+        if (!state.MatchesCurrent)
+        {
+            Log.Write($"开机启动任务指向旧位置：{state.Command}；在常规页关闭再开启一次即可修正");
+        }
+    }
+
     /// <summary>
     /// 拼出当前进程的开机启动登记器。
+    /// </summary>
+    private static StartupRegistration CreateStartupRegistration()
+    {
+        var (path, arguments) = ResolveStartupTarget();
+        return new StartupRegistration(path, arguments);
+    }
+
+    /// <summary>拼出开机启动任务的登记器。</summary>
+    private static ElevatedStartupTask CreateStartupTask()
+    {
+        var (path, arguments) = ResolveStartupTarget();
+        return new ElevatedStartupTask(path, arguments);
+    }
+
+    /// <summary>
+    /// 解析出「要启动哪个可执行文件、带什么参数」。
     /// </summary>
     /// <remarks>
     /// 正常双击的是 apphost（<c>BetterMicrosoftPinyin.exe</c>）；用 <c>dotnet BetterPinyin.App.dll</c>
     /// 调试时 <see cref="Environment.ProcessPath"/> 会变成 <c>dotnet.exe</c>，
     /// 直接拿它登记会变成「开机启动一个空的 dotnet」，所以优先换回同目录的 apphost。
     /// </remarks>
-    private static StartupRegistration CreateStartupRegistration()
+    private static (string Path, string Arguments) ResolveStartupTarget()
     {
         var path = Environment.ProcessPath;
         if (string.IsNullOrEmpty(path) ||
@@ -167,21 +234,22 @@ internal static class AppServices
             var appHost = Path.Combine(AppContext.BaseDirectory, "BetterMicrosoftPinyin.exe");
             if (File.Exists(appHost))
             {
-                path = appHost;
+                return (appHost, "--autostart");
             }
-            else if (Assembly.GetEntryAssembly()?.Location is { Length: > 0 } entry)
+
+            if (Assembly.GetEntryAssembly()?.Location is { Length: > 0 } entry)
             {
                 // 没有 apphost 时退回 dotnet + 入口 dll，保证开发环境下也能验证。
                 var dotnet = string.IsNullOrEmpty(path)
                     ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "dotnet.exe")
                     : path;
-                return new StartupRegistration(dotnet, $"\"{entry}\" --autostart");
+                return (dotnet, $"\"{entry}\" --autostart");
             }
         }
 
         // 走到这里仍为空只可能是宿主异常；给一个同目录下的默认名，至少不会让属性初始化抛异常。
         path ??= Path.Combine(AppContext.BaseDirectory, "BetterMicrosoftPinyin.exe");
-        return new StartupRegistration(path, "--autostart");
+        return (path, "--autostart");
     }
 
     /// <summary>
