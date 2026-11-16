@@ -39,7 +39,7 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
     public string DisplayName => "云联想";
 
     /// <inheritdoc />
-    public string Description => "为微软拼音补充 Bing 联想词";
+    public string Description => "为微软拼音补充云端联想词";
 
     /// <inheritdoc />
     public bool IsEnabled

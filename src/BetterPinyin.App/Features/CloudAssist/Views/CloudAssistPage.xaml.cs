@@ -5,6 +5,7 @@ using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
 using BetterPinyin.App.Shell.Controls;
+using BetterPinyin.Core.Cloud;
 using BetterPinyin.Core.Settings;
 
 namespace BetterPinyin.App.Features.CloudAssist.Views;
@@ -60,6 +61,10 @@ public partial class CloudAssistPage : Page
     private Point _dragStart;
     private ExtendedKeyItem? _dragItem;
     private bool _draggingKeys;
+
+    // 本次打开设置页后是否已经确认过「拼音会发给搜狗」。
+    // 只记账一次：同一页里反复保存不该每次都弹框。
+    private bool _sogouNoticeAccepted;
 
     /// <summary>创建设置页。</summary>
     /// <param name="feature">所属功能模块。</param>
@@ -124,6 +129,7 @@ public partial class CloudAssistPage : Page
             ? Settings.StrictAcceptKey
             : "Oem3";
 
+        SelectByTag(ProviderComboBox, CloudSourceCatalog.Normalize(Settings.StrictProvider));
         SelectByTag(ExtendedCountComboBox, Settings.ExtendedMaxCount.ToString(CultureInfo.InvariantCulture));
         SelectByTag(ExtendedKeyModeComboBox, Settings.ExtendedKeyMode);
         SelectByTag(PlacementComboBox, Settings.OverlayPlacement);
@@ -137,10 +143,37 @@ public partial class CloudAssistPage : Page
         BlockedTextBox.Text = string.Join(", ", Settings.BlockedProcesses);
 
         UpdateKeyModeState();
+        UpdateProviderState();
     }
 
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
+        // 来源从 Bing 切到搜狗时先确认一次：拼音会离开本机。
+        var provider = CloudSourceCatalog.Normalize(TagOf(ProviderComboBox, CloudSourceCatalog.DefaultId));
+        if (provider == CloudSourceCatalog.SogouId &&
+            CloudSourceCatalog.Normalize(Settings.StrictProvider) != CloudSourceCatalog.SogouId &&
+            !_sogouNoticeAccepted)
+        {
+            var confirm = MessageBox.Show(
+                "选择搜狗后，你正在输入的拼音会上传给搜狗（shouji.sogou.com）。\n\n继续切换吗？",
+                "切换云联想来源",
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Warning,
+                MessageBoxResult.Cancel);
+
+            if (confirm != MessageBoxResult.OK)
+            {
+                SelectByTag(ProviderComboBox, CloudSourceCatalog.DefaultId);
+                UpdateProviderState();
+                SaveStatusText.Text = "已取消切换来源";
+                return;
+            }
+
+            _sogouNoticeAccepted = true;
+        }
+
+        Settings.StrictProvider = provider;
+
         Settings.CloudAssistEnabled = EnabledCheckBox.IsChecked == true;
         Settings.StrictEnabled = StrictCheckBox.IsChecked == true;
         Settings.StrictDedupeLocal = StrictDedupeCheckBox.IsChecked == true;
@@ -206,6 +239,7 @@ public partial class CloudAssistPage : Page
         Settings.CloudAssistEnabled = defaults.CloudAssistEnabled;
         Settings.StrictEnabled = defaults.StrictEnabled;
         Settings.StrictDedupeLocal = defaults.StrictDedupeLocal;
+        Settings.StrictProvider = defaults.StrictProvider;
         Settings.StrictAcceptKey = defaults.StrictAcceptKey;
         Settings.ExtendedEnabled = defaults.ExtendedEnabled;
         Settings.ExtendedMaxCount = defaults.ExtendedMaxCount;
@@ -230,6 +264,24 @@ public partial class CloudAssistPage : Page
         SaveStatusText.Text = saved
             ? "已恢复默认设置"
             : $"已恢复，但写入配置失败：{AppServices.Store.LastError}";
+    }
+
+    private void OnProviderChanged(object sender, SelectionChangedEventArgs e) => UpdateProviderState();
+
+    /// <summary>来源切到搜狗时展开隐私提示，切回 Bing 时收起。</summary>
+    private void UpdateProviderState()
+    {
+        if (SogouNoticeText is null || ProviderComboBox is null)
+        {
+            // XAML 还没初始化完时 SelectionChanged 会提前触发。
+            return;
+        }
+
+        SogouNoticeText.Visibility =
+            CloudSourceCatalog.Normalize(TagOf(ProviderComboBox, CloudSourceCatalog.DefaultId)) ==
+            CloudSourceCatalog.SogouId
+                ? Visibility.Visible
+                : Visibility.Collapsed;
     }
 
     private void OnKeyModeChanged(object sender, SelectionChangedEventArgs e) => UpdateKeyModeState();
