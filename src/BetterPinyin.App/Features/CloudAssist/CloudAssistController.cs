@@ -586,7 +586,7 @@ internal sealed class CloudAssistController : IDisposable
 
     /// <summary>把两个槽各自的来源拼成一行人话，用于诊断。</summary>
     /// <param name="set">分区结果。</param>
-    /// <returns>形如 <c>严格=sogou，扩展=bing-osjson</c> 的说明。</returns>
+    /// <returns>形如 <c>严格=sogou，扩展=bing-qsonhs</c> 的说明。</returns>
     private static string DescribeSources(SuggestionSet set)
     {
         var strict = set.Strict?.ProviderId ?? "-";

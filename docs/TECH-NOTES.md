@@ -91,8 +91,8 @@ SendInput(Esc)
 
 | 事实 | 影响 |
 |---|---|
-| `api.bing.com/osjson.aspx?query=x&market=zh-CN` 返回 `["x",["词1","词2"]]` | 首选格式，解析最简单 |
-| `api.bing.com/qsonhs.aspx?type=cb&q=x` 即使不传 `cb` 也返回纯 JSON | 可作为第二解析路径交叉验证 |
+| `api.bing.com/osjson.aspx` 自 2026-11 起对任何查询返回 204（换参数/UA/Cookie、直连与代理、`cn.bing.com` 均如此） | 已降为最后兜底；它排首位时每次查询先白等约 450ms |
+| `api.bing.com/qsonhs.aspx?type=cb&q=x` 即使不传 `cb` 也返回纯 JSON | 当前首选入口，`cn` / `www` 同一格式，可交叉验证 |
 | 响应可能带 JSONP 包装与尾部注释 `/* pageview_candidate */` | 解析前要截取首个 `{`/`[` 到最后一个 `}`/`]` |
 | `cn.bing.com` 实测延迟更低，但结果经过内容过滤 | 可作降级源，但要给权重打折并在界面说明 |
 | 纯缩写（`ystl`）直查返回的是拉丁垃圾（`ystl.jp`、`ystl stock`） | 必须靠"只留纯汉字"和读音校验过滤，否则会污染候选 |

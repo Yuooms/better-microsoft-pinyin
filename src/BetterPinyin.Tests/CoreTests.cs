@@ -85,24 +85,25 @@ internal static class CoreTests
 {
     public static void RunAll()
     {
-        Run("[1/18] Bing 响应解析", Parser);
-        Run("[2/18] 候选清洗", Sanitizer);
-        Run("[3/18] 拼音匹配", Matcher);
-        Run("[4/18] 严格 / 扩展分区", Selector);
-        Run("[5/18] 排序合并（旧链路）", Ranker);
-        Run("[6/18] 设置持久化", Settings);
-        Run("[7/18] 词库词表", Catalog);
-        Run("[8/18] 用户词库", Wordbook);
-        Run("[9/18] 自学习词库", Learning);
-        Run("[10/18] 自学习词库删除", LearningDelete);
-        Run("[11/18] 自学习词库备份", LearningBackup);
-        Run("[12/18] 开机启动登记", StartupRegistrationTest);
-        Run("[13/18] 输入统计", Statistics);
-        Run("[14/18] 组字状态机", CompositionTrackerStates);
-        Run("[15/18] 版本检查与更新脚本", Updates);
-        Run("[16/18] 搜狗组帧与解帧", Sogou);
-        Run("[17/18] 搜狗客户端（桩 HTTP）", SogouClient);
-        Run("[18/18] 双源合并", SelectorCombine);
+        Run("[1/19] Bing 响应解析", Parser);
+        Run("[2/19] 候选清洗", Sanitizer);
+        Run("[3/19] 拼音匹配", Matcher);
+        Run("[4/19] 严格 / 扩展分区", Selector);
+        Run("[5/19] 排序合并（旧链路）", Ranker);
+        Run("[6/19] 设置持久化", Settings);
+        Run("[7/19] 词库词表", Catalog);
+        Run("[8/19] 用户词库", Wordbook);
+        Run("[9/19] 自学习词库", Learning);
+        Run("[10/19] 自学习词库删除", LearningDelete);
+        Run("[11/19] 自学习词库备份", LearningBackup);
+        Run("[12/19] 开机启动登记", StartupRegistrationTest);
+        Run("[13/19] 输入统计", Statistics);
+        Run("[14/19] 组字状态机", CompositionTrackerStates);
+        Run("[15/19] 版本检查与更新脚本", Updates);
+        Run("[16/19] 搜狗组帧与解帧", Sogou);
+        Run("[17/19] 搜狗客户端（桩 HTTP）", SogouClient);
+        Run("[18/19] 双源合并", SelectorCombine);
+        Run("[19/19] Bing 端点清单", BingEndpoints);
     }
 
     /// <summary>逐组执行，一组崩掉不影响其它组出结论。</summary>
@@ -1437,6 +1438,20 @@ internal static class CoreTests
         var merged = SuggestionSelector.Combine(emptyStrict, extendedSet);
         Check.True(merged.Strict is null, "严格槽应保持为空");
         Check.Equal(2, merged.Extended.Count, "扩展槽应保留");
+    }
+
+    /// <summary>端点清单的护栏：失效端点不得再排到自动降级链的前面。</summary>
+    private static void BingEndpoints()
+    {
+        var endpoints = BingEndpointCatalog.CloudEndpoints;
+        var ids = endpoints.Select(e => e.Id).ToArray();
+
+        Check.Equal(4, ids.Length, "Bing 端点数量");
+        Check.Equal("bing-qsonhs", ids[0], "首选端点应为 qsonhs");
+        Check.Equal("bing-osjson", ids[^1], "osjson 已失效，只能作为最后兜底");
+        Check.True(
+            endpoints.Take(3).All(e => e.Format == BingResponseFormat.SearchBoxJson),
+            "前三顺位都应是搜索框格式");
     }
 
     /// <summary>固定返回预设响应的 HTTP 桩，用来在不联网的情况下验证请求形状。</summary>

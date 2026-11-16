@@ -5,7 +5,7 @@ namespace BetterPinyin.Core.Cloud;
 /// </summary>
 /// <remarks>
 /// 「来源」分两层：家族（<c>bing</c> / <c>sogou</c>）由设置选择，
-/// 端点（<c>bing-osjson</c> 等）由客户端内部决定。
+/// 端点（<c>bing-qsonhs</c> 等）由客户端内部决定。
 /// 设置里只存家族 id，端点级信息随 <see cref="CloudProviderAnswer.SourceId"/> 返回。
 /// </remarks>
 public static class CloudSourceCatalog

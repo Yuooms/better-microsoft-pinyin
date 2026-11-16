@@ -9,7 +9,7 @@ namespace BetterPinyin.Core.Network;
 /// <summary>
 /// 单个端点的体检结果。
 /// </summary>
-/// <param name="Id">端点标识，例如 <c>bing-osjson</c> 或 <c>sogou</c>。</param>
+/// <param name="Id">端点标识，例如 <c>bing-qsonhs</c> 或 <c>sogou</c>。</param>
 /// <param name="DisplayName">界面上显示的名字。</param>
 /// <param name="Reachable">是否能解析出结果（仅 HTTP 200 不算通过）。</param>
 /// <param name="LatencyMilliseconds">耗时。</param>

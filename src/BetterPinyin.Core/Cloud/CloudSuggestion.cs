@@ -4,7 +4,7 @@ namespace BetterPinyin.Core.Cloud;
 /// 一条云联想候选（业务模型）。
 /// </summary>
 /// <param name="Text">候选词文本。</param>
-/// <param name="ProviderId">来源标识，例如 <c>bing-osjson</c>。</param>
+/// <param name="ProviderId">来源标识，例如 <c>bing-qsonhs</c>。</param>
 /// <param name="ProviderRank">在来源结果中的原始名次（从 0 开始）。</param>
 /// <param name="Score">本项目的最终打分（0~1），越大越靠前。</param>
 /// <param name="Reading">读音（已知时填写，未知为 null）。</param>
@@ -26,7 +26,7 @@ public sealed record CloudSuggestion(
 /// </summary>
 /// <param name="Items">原始候选文本，已按来源相关度排序；失败时为空列表。</param>
 /// <param name="SourceId">
-/// 本次真正生效的来源标识。Bing 会带上命中的端点（如 <c>bing-osjson</c>），
+/// 本次真正生效的来源标识。Bing 会带上命中的端点（如 <c>bing-qsonhs</c>），
 /// 搜狗固定为 <c>sogou</c>。
 /// </param>
 /// <remarks>

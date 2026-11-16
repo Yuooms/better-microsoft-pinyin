@@ -48,28 +48,27 @@ public sealed record BingEndpoint(
 /// Bing 端点清单。
 /// </summary>
 /// <remarks>
+/// <para>
 /// 多端点并存是为了适配不同网络环境，而不是"国内一套、国外一套"的硬编码：
 /// 运行时由探测结果决定优先级，代码里不出现任何地区判断。
+/// </para>
+/// <para>
+/// 原首选端点 <c>api.bing.com/osjson.aspx</c> 自 2026-11 起恒返回 <c>204 No Content</c>：
+/// 换参数、UA、Cookie、直连与代理、以及 <c>cn.bing.com</c> 均一样，而 qsonhs 正常。
+/// 但无法确认这是永久下线还是阶段性故障，所以没有删除，而是降到末位兜底——
+/// 正常情况下永远走不到它，真恢复了也能自动用上。
+/// </para>
 /// </remarks>
 public static class BingEndpointCatalog
 {
-    /// <summary>主源：OpenSearch 格式，结果最完整。</summary>
-    public static BingEndpoint Primary { get; } = new(
-        "bing-osjson",
-        "api.bing.com",
-        "/osjson.aspx",
-        BingResponseFormat.OpenSearchJson,
-        HasContentFilter: false,
-        "Bing 主接口，返回最完整");
-
-    /// <summary>备源：搜索框格式，与主源解析路径不同，可交叉验证。</summary>
+    /// <summary>首选端点：搜索框格式，当前唯一稳定的入口。</summary>
     public static BingEndpoint Secondary { get; } = new(
         "bing-qsonhs",
         "api.bing.com",
         "/qsonhs.aspx",
         BingResponseFormat.SearchBoxJson,
         HasContentFilter: false,
-        "Bing 备接口，解析路径不同");
+        "Bing 首选接口");
 
     /// <summary>国内直连端点：实测延迟最低，但存在内容过滤。</summary>
     public static BingEndpoint China { get; } = new(
@@ -90,13 +89,27 @@ public static class BingEndpointCatalog
         "海外兜底");
 
     /// <summary>
+    /// 旧端点：2026-11 实测恒返回 204，降为最后兜底。
+    /// </summary>
+    /// <remarks>
+    /// 放在链尾的代价只在"前三个端点全挂"时才会付出；它若恢复，下次查询会自然用上。
+    /// </remarks>
+    public static BingEndpoint LegacyOpenSearch { get; } = new(
+        "bing-osjson",
+        "api.bing.com",
+        "/osjson.aspx",
+        BingResponseFormat.OpenSearchJson,
+        HasContentFilter: false,
+        "旧接口，2026-11 起返回 204，仅作最后兜底");
+
+    /// <summary>
     /// 按优先级排列的全部云端点。
     /// </summary>
     public static IReadOnlyList<BingEndpoint> CloudEndpoints { get; } = new[]
     {
-        Primary,
         Secondary,
         China,
         Global,
+        LegacyOpenSearch,
     };
 }

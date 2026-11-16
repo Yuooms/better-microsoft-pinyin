@@ -234,13 +234,17 @@ internal static class Program
                     !SyllableTable.Default.TrySegment(query, true, out _);
                 var request = isAbbreviation ? expansions[0] : query;
 
+                var watch = Stopwatch.StartNew();
                 var answer = await client.QueryAsync(request, timeout.Token).ConfigureAwait(false);
+                watch.Stop();
                 var cleaned = ResultSanitizer.Sanitize(answer.Items, request, SanitizeOptions.Extended);
                 // 与控制器保持一致：分区用实际请求串，而不是用户的简拼原文。
                 var set = SuggestionSelector.Select(
                     request, cleaned, null, matcher, options, providerId: answer.SourceId);
 
-                Console.WriteLine($"    {query,-10} 查询={request}  原始 {answer.Items.Count,2} 条  来源={answer.SourceId}");
+                Console.WriteLine(
+                    $"    {query,-10} 查询={request}  原始 {answer.Items.Count,2} 条  " +
+                    $"来源={answer.SourceId}  {watch.ElapsedMilliseconds}ms");
                 Console.WriteLine($"    {"",-10}   严格：{set.Strict?.Text ?? "(无)"}");
                 Console.WriteLine($"    {"",-10}   扩展：{(set.Extended.Count == 0 ? "(无)" : string.Join(" / ", set.Extended.Select(e => e.Text)))}");
                 if (isAbbreviation)

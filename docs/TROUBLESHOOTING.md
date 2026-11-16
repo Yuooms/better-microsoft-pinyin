@@ -3,7 +3,7 @@
 先看日志：`%LOCALAPPDATA%\BetterPinyin\logs\app.log`。里面会记录每次云联想的处理结果，例如：
 
 ```
-19:37:52  [云联想] yisitalu → 伊斯塔露（来源 bing-osjson，锚点 候选窗）
+19:37:52  [云联想] yisitalu → 伊斯塔露（来源 bing-qsonhs，锚点 候选窗）
 19:38:10  [云联想] ystl：云端无可用候选（原始 12 条均被过滤）
 19:38:25  [云联想] weiruan：5 条候选均已在本地区命中或读音不符
 ```
