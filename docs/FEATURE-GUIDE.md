@@ -104,6 +104,15 @@ _registry.Register(new WordCountFeature(AppServices.Settings));
 - 「保存」时写回设置对象 → `AppServices.SaveSettings()` → 调用模块自己的 `ApplySettings()`。
 - 需要实时日志时订阅模块事件，在 `Unloaded` 里退订；再 `Loaded` 时先减后加，避免重复订阅。
 
+## 再加一个云词源
+
+1. 在 `Core/Cloud/<厂家>/` 写客户端，实现 `ICloudSuggestionProvider`（`Id` + `QueryAsync`，返回 `CloudProviderAnswer`）。
+2. 协议不是 JSON 时，把组帧与解帧拆成两个纯函数；解帧对任何字节流都不许抛异常（截断、长度不符、字段越界都要能安全退出）。
+3. 在 `CloudSourceCatalog` 登记 id，并在 `Normalize` 里放行；未知值必须回落到 Bing。
+4. `AppSettings` 加字段时给默认值，老配置读出来必须仍是 Bing，行为不变。
+5. 设置页的来源下拉加一项，并写清隐私边界（拼音会发给哪个域名）。
+6. 用实测响应做 golden fixture，至少补四类离线用例：组帧逐字节、解帧、截断模糊、桩 HTTP。
+
 ## 检查清单
 
 - [ ] `Id` 唯一，且不与已有模块重复（`FeatureRegistry` 会抛异常提示）。
@@ -111,6 +120,8 @@ _registry.Register(new WordCountFeature(AppServices.Settings));
 - [ ] `StopAsync` 能真正释放资源，卸载后系统状态与安装前一致。
 - [ ] 设置项都有默认值，首次运行不写配置文件也能工作。
 - [ ] 涉及网络/跨进程的操作都带超时。
+- [ ] 涉及第三方服务的开关默认保守，并在设置页写明「什么数据会发给谁」。
+- [ ] 来源不是 Bing 且扩展云联想关闭时，不得再向 Bing 发请求。
 - [ ] 面向用户的文案是中文，并且说明了该功能会做什么。
 - [ ] README 与相关 docs 同步更新（功能清单、排障、路线图），别让文档停在设计稿阶段。
 

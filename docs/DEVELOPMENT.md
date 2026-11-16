@@ -45,9 +45,12 @@ dotnet run --project src/BetterPinyin.App
 ```bash
 dotnet run --project src/BetterPinyin.Tests          # 离线单元测试
 dotnet run --project src/BetterPinyin.Tests -- --live  # 额外跑一次真实联网验证
+dotnet run --project src/BetterPinyin.Tests -- --sogou nihao  # 打印搜狗请求帧/响应帧 hex 与解析结果
 ```
 
-`--live` 会真的请求搜索建议接口，打印每个查询的原始条数、清洗结果、最终排序，用来确认端到端链路没坏。
+`--live` 会真的请求搜索建议接口（Bing 与搜狗各一段），打印每个查询的原始条数、清洗结果、最终排序，用来确认端到端链路没坏。
+
+`--sogou` 也联网，用途是把响应 hex 抓下来更新离线 fixture；接口改协议时，用它先确认是组帧坏了还是解帧坏了。
 
 ## 诊断工具：ImeProbe
 

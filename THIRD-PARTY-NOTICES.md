@@ -41,6 +41,18 @@ Fluent 控件、导航与标题栏。它们以二进制形式随程序分发。
 - 用途：词表与词频
 - 许可：MIT License，Copyright (c) 2013 Sun Junyi
 
+## 在线词库接口（非代码，不随程序分发）
+
+运行期会按需向下列第三方服务发送**当前输入的拼音串**，用于取回云联想候选。这些是各家的公开 Web 端点，
+不是官方开放 API，没有公开契约或许可承诺，可能随时变更、限流或停止服务：
+
+- 必应搜索建议：`api.bing.com` / `cn.bing.com` / `www.bing.com`
+- 搜狗网页输入法：`shouji.sogou.com`（私有二进制协议）
+
+程序不随包分发上述服务的任何代码或数据，也不代表它们与本项目存在合作或背书关系。
+搜狗协议的实现参考了 rime 社区公开项目（librime-cloud、rime-wenyun）对协议的描述，
+**未复制其源代码**。用户可以在「设置 → 云联想 → 来源」里选择 Bing 或搜狗，或直接关闭云联想。
+
 ## 界面思路参考（未引入代码）
 
 - 项目：BetterGI，https://github.com/babalae/better-genshin-impact
