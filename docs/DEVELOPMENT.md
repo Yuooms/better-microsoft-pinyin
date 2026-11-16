@@ -21,7 +21,7 @@ dotnet build -c Debug
 dotnet run --project src/BetterPinyin.App
 ```
 
-首次运行会打开设置窗口。之后常驻托盘，双击托盘图标可再次打开设置。
+手动运行（命令行走 `dotnet run` 也一样）会直接打开设置窗口；只有带 `--autostart` 的自启动参数才静默驻留托盘。已经在运行时再运行一次，会把已有实例的设置窗口叫到前台（命名事件 `Local\BetterMicrosoftPinyin.Activate`）。
 
 ### 构建产物都在哪
 
