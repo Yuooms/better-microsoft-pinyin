@@ -108,9 +108,9 @@ _registry.Register(new WordCountFeature(AppServices.Settings));
 
 1. 在 `Core/Cloud/<厂家>/` 写客户端，实现 `ICloudSuggestionProvider`（`Id` + `QueryAsync`，返回 `CloudProviderAnswer`）。
 2. 协议不是 JSON 时，把组帧与解帧拆成两个纯函数；解帧对任何字节流都不许抛异常（截断、长度不符、字段越界都要能安全退出）。
-3. 在 `CloudSourceCatalog` 登记 id，并在 `Normalize` 里放行；未知值必须回落到 Bing。
-4. `AppSettings` 加字段时给默认值，老配置读出来必须仍是 Bing，行为不变。
-5. 设置页的来源下拉加一项，并写清隐私边界（拼音会发给哪个域名）。
+3. 在 `CloudSourceCatalog` 的 `Definitions` 登记：id、显示名、一句话说明、是否支持扩展（`SupportsExtended`）；未知值必须回落到 Bing。
+4. `AppSettings` 加字段时给默认值，老配置读出来必须仍是 Bing，行为不变。来源列表由 `NormalizeList` 补齐，新来源会以禁用状态追加在末尾。
+5. 不需要改设置页：来源列表按 `Definitions` 自动生成，开关与拖动排序都现成。写清隐私边界（拼音会发给哪个域名）即可。
 6. 用实测响应做 golden fixture，至少补四类离线用例：组帧逐字节、解帧、截断模糊、桩 HTTP。
 
 ## 检查清单

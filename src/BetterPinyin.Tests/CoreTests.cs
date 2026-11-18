@@ -1350,7 +1350,12 @@ internal static class CoreTests
             Check.True(defaults.UpdateCheckEnabled, "默认开启启动时检查更新");
             Check.True(defaults.LastUpdateCheckUtc is null, "默认没有检查记录");
             Check.True(!defaults.PhraseWriteExtended, "扩展词默认不写入自定义短语");
-            Check.Equal("bing", defaults.StrictProvider, "云联想来源默认 Bing");
+            Check.Equal(CloudSourceCatalog.BingId, defaults.CloudSources[0].Id, "默认来源第一位是 Bing");
+            Check.True(defaults.CloudSources[0].Enabled, "默认启用 Bing");
+            Check.True(defaults.CloudSources.Skip(1).All(s => !s.Enabled), "其余来源默认禁用");
+            Check.True(defaults.ParallelCloudQuery, "默认并行查询所有启用来源");
+            Check.True(CloudSourceCatalog.SupportsExtended("bing"), "Bing 支持扩展云联想");
+            Check.False(CloudSourceCatalog.SupportsExtended("sogou"), "搜狗不提供扩展词");
             Check.Equal("sogou", CloudSourceCatalog.Normalize("SOGOU"), "来源取值应忽略大小写");
             Check.Equal("bing", CloudSourceCatalog.Normalize("baidu"), "未知来源应回落到 Bing");
             Check.Equal("bing", CloudSourceCatalog.Normalize(null), "空来源应回落到 Bing");
@@ -1376,13 +1381,58 @@ internal static class CoreTests
             Check.True(reloaded.PhraseWriteExtended, "扩展词写入开关应持久化");
             Check.Contains(reloaded.BlockedProcesses, "mstsc", "黑名单应持久化");
 
-            // 老配置里没有 StrictProvider：必须读到默认值，且不影响其它字段。
+            // 老配置里没有 StrictProvider：按默认来源迁移，且不影响其它字段。
             File.WriteAllText(path, "{\"StrictEnabled\":false,\"PopupStyle\":\"Acrylic\"}");
             var legacy = new SettingsStore(path).Load();
-            Check.Equal("bing", legacy.StrictProvider, "老配置的来源应回落到 Bing");
+            Check.Equal(CloudSourceCatalog.BingId, legacy.CloudSources[0].Id, "老配置缺来源时应回落到 Bing");
+            Check.True(legacy.CloudSources[0].Enabled, "回落的来源应启用");
             Check.Equal(PopupStyleCatalog.Classic, legacy.PopupStyle, "老配置的亚克力应迁移到经典");
             Check.True(legacy.PopupStyleDefaultApplied, "老配置读取后应置位迁移标记");
             Check.False(legacy.StrictEnabled, "老配置的其它字段仍应正常读取");
+
+            // 老配置选了搜狗：迁移后搜狗排第一且启用，Bing 留作可选项但禁用。
+            File.WriteAllText(path, "{\"StrictProvider\":\"sogou\"}");
+            var legacySogou = new SettingsStore(path).Load();
+            Check.Equal(CloudSourceCatalog.SogouId, legacySogou.CloudSources[0].Id, "老配置的搜狗应排第一");
+            Check.True(legacySogou.CloudSources[0].Enabled, "老配置选中的来源应保持启用");
+            Check.Equal(CloudSourceCatalog.BingId, legacySogou.CloudSources[1].Id, "Bing 应补在第二位");
+            Check.False(legacySogou.CloudSources[1].Enabled, "用户没选的来源不能因为迁移被打开");
+            Check.True(legacySogou.StrictProvider is null, "迁移后旧字段应清空，不再写回");
+
+            // 顺序与开关要持久化：列表本身就是优先级。
+            legacySogou.CloudSources = new List<CloudSourceSetting>
+            {
+                new() { Id = CloudSourceCatalog.SogouId, Enabled = true },
+                new() { Id = CloudSourceCatalog.BingId, Enabled = true },
+            };
+            Check.True(new SettingsStore(path).Save(legacySogou), "多来源配置应可保存");
+            var reordered = new SettingsStore(path).Load();
+            Check.Equal(CloudSourceCatalog.SogouId, reordered.CloudSources[0].Id, "保存后顺序应保持");
+            Check.True(reordered.CloudSources[1].Enabled, "第二个来源的开关应保持启用");
+            var enabledOrder = CloudSourceCatalog.ResolveEnabled(reordered.CloudSources);
+            Check.Equal(2, enabledOrder.Count, "两个来源都应参与取词");
+            Check.Equal(CloudSourceCatalog.SogouId, enabledOrder[0], "取词顺序跟用户设定");
+
+            // 归一化：未知来源丢掉、重复只留第一个、缺的补在末尾且禁用。
+            var normalized = CloudSourceCatalog.NormalizeList(new List<CloudSourceSetting>
+            {
+                new() { Id = "sogou", Enabled = true },
+                new() { Id = "baidu", Enabled = true },
+                new() { Id = "SOGOU", Enabled = false },
+            });
+            Check.Equal(2, normalized.Count, "未知来源应被丢弃，重复来源只留一个");
+            Check.Equal(CloudSourceCatalog.SogouId, normalized[0].Id, "归一化不能打乱用户顺序");
+            Check.True(normalized[0].Enabled, "重复项保留第一次的开关");
+            Check.Equal(CloudSourceCatalog.BingId, normalized[1].Id, "缺失的来源补在末尾");
+            Check.False(normalized[1].Enabled, "补齐的来源默认禁用");
+
+            // 全部关闭是合法状态：不取词，但列表顺序仍保留。
+            var allOff = CloudSourceCatalog.ResolveEnabled(new List<CloudSourceSetting>
+            {
+                new() { Id = CloudSourceCatalog.BingId, Enabled = false },
+                new() { Id = CloudSourceCatalog.SogouId, Enabled = false },
+            });
+            Check.Equal(0, allOff.Count, "全部关闭时没有可用来源");
 
             // 旧版本的默认值就是 Card：Win10 升级后应跟着系统默认走经典。
             File.WriteAllText(path, "{\"PopupStyle\":\"Card\"}");

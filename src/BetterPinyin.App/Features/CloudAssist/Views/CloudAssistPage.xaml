@@ -41,7 +41,7 @@
                               Foreground="{DynamicResource TextFillColorSecondaryBrush}"
                               TextWrapping="Wrap"
                               Margin="0,4,0,0"
-                              Text="输入拼音时从云端取联想词。云联想严格按字数匹配，来源可在下方切换；扩展云联想补充更长的词，固定用 Bing。两者可独立开关。" />
+                              Text="输入拼音时从云端取联想词。云联想严格按字数匹配，来源按下方顺序依次尝试；扩展云联想补充更长的词，只由支持扩展的来源提供。两者可独立开关。" />
 
                 <!--
                     权限提示。前台程序比本程序权限高时，UIPI 会让键盘钩子收不到按键，
@@ -104,25 +104,93 @@
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="来源"
-                                                ui:SettingRow.Description="云联想从哪个接口取词。扩展云联想固定用 Bing。">
-                            <ComboBox x:Name="ProviderComboBox" Width="220"
-                                      SelectionChanged="OnProviderChanged">
-                                <ComboBoxItem Content="必应 Bing（默认）" Tag="bing" />
-                                <ComboBoxItem Content="搜狗（仅整词）" Tag="sogou" />
-                            </ComboBox>
+                                                ui:SettingRow.Description="按从上到下的顺序取词：前一个来源没有可用整词时，才看下一个。拖动左侧手柄调整顺序，开关控制是否参与。">
+                            <StackPanel Width="300">
+                                <ListBox x:Name="SourcesList"
+                                         Background="Transparent"
+                                         BorderThickness="0"
+                                         Padding="0"
+                                         HorizontalContentAlignment="Stretch"
+                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                         PreviewMouseLeftButtonDown="OnSourcesMouseDown"
+                                         PreviewMouseMove="OnSourcesMouseMove"
+                                         PreviewMouseLeftButtonUp="OnSourcesMouseUp"
+                                         LostMouseCapture="OnSourcesLostCapture">
+                                    <ListBox.ItemContainerStyle>
+                                        <Style TargetType="ListBoxItem">
+                                            <Setter Property="Padding" Value="0" />
+                                            <Setter Property="Margin" Value="0" />
+                                            <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+                                            <Setter Property="Background" Value="Transparent" />
+                                            <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+                                            <Setter Property="Template">
+                                                <Setter.Value>
+                                                    <ControlTemplate TargetType="ListBoxItem">
+                                                        <ContentPresenter />
+                                                    </ControlTemplate>
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Style>
+                                    </ListBox.ItemContainerStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border Height="48"
+                                                    Margin="0,0,0,6"
+                                                    Padding="8,0"
+                                                    Background="{DynamicResource ControlFillBrush}"
+                                                    BorderBrush="{DynamicResource ControlStrokeBrush}"
+                                                    BorderThickness="1"
+                                                    CornerRadius="{DynamicResource ControlCornerRadius}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="Auto" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="Auto" />
+                                                    </Grid.ColumnDefinitions>
+
+                                                    <TextBlock Text="⋮⋮"
+                                                               VerticalAlignment="Center"
+                                                               Margin="0,0,10,0"
+                                                               Cursor="SizeAll"
+                                                               Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" />
+                                                        <TextBlock Text="{Binding Summary}"
+                                                                   FontSize="12"
+                                                                   Margin="0,1,0,0"
+                                                                   Foreground="{DynamicResource TextFillColorSecondaryBrush}" />
+                                                    </StackPanel>
+
+                                                    <fl:ToggleSwitch Grid.Column="2"
+                                                                     VerticalAlignment="Center"
+                                                                     IsChecked="{Binding Enabled, Mode=TwoWay}"
+                                                                     AutomationProperties.Name="{Binding DisplayName}" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </StackPanel>
                         </HeaderedContentControl>
 
                         <!--
-                            隐私提示是「来源」这一行的附属说明，但不放进该行的 Content：
-                            那会把行撑高，两种来源下 ComboBox 的垂直位置就不一致了。
+                            隐私说明是「来源」这一行的附属内容，但刻意不放进该行：
+                            列表本身高度会变，放进 Content 会让右侧控件跟着上下跳。
                         -->
-                        <fl:TextBlock x:Name="SogouNoticeText"
-                                      Visibility="Collapsed"
+                        <fl:TextBlock x:Name="SourceNoticeText"
                                       FontTypography="Caption"
                                       TextWrapping="Wrap"
                                       Margin="16,0,16,10"
                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                      Text="选择搜狗后，正在输入的拼音会发送给搜狗（shouji.sogou.com）。搜狗只返回整词候选，不补充更长的扩展词；关闭扩展云联想后不会再访问 Bing。" />
+                                      Text="启用的来源都会收到正在输入的拼音：必应（api.bing.com 等）、搜狗（shouji.sogou.com）。关掉的来源不会被请求。" />
+
+                        <HeaderedContentControl Style="{StaticResource SettingRow}"
+                                                Header="并行查询所有启用的来源"
+                                                ui:SettingRow.Description="同时请求所有启用的来源，延迟取较慢的那条。关闭后按顺序逐个查询，前面的来源有结果就不再问后面的——更省流量，但双源都启用时最坏多一次往返。">
+                            <fl:ToggleSwitch x:Name="ParallelCheckBox"
+                                             AutomationProperties.Name="并行查询所有启用的来源" />
+                        </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="采纳键"
@@ -147,8 +215,23 @@
                                                 Header="启用扩展云联想"
                                                 ui:SettingRow.Description="补充以当前拼音开头的更长词。例如 ruonawa 会补充「若娜瓦壁纸」「若娜瓦英文」。">
                             <fl:ToggleSwitch x:Name="ExtendedCheckBox"
+                                             Checked="OnExtendedEnabledChanged"
+                                             Unchecked="OnExtendedEnabledChanged"
                                              AutomationProperties.Name="启用扩展云联想" />
                         </HeaderedContentControl>
+
+                        <!--
+                            扩展词只能由声明支持扩展的来源提供（当前是 Bing）。
+                            用户把它关掉时，这里的开关还开着也没有结果，必须当场说清楚，
+                            否则只会看到「打开了但永远不显示」。
+                        -->
+                        <fl:TextBlock x:Name="ExtendedSourceHintText"
+                                      Visibility="Collapsed"
+                                      FontTypography="Caption"
+                                      TextWrapping="Wrap"
+                                      Margin="16,0,16,10"
+                                      Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                                      Text="当前没有启用的来源能提供扩展词（目前只有必应 Bing 支持）。启用 Bing 后扩展云联想会自动恢复。" />
 
                         <!-- 说明文字随模式改：自动模式是上限，手动模式是键数（见 UpdateKeyModeState） -->
                         <HeaderedContentControl x:Name="ExtendedCountRow"

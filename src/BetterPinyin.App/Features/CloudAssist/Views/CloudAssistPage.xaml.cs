@@ -1,7 +1,9 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using BetterPinyin.App.Shell;
@@ -11,6 +13,57 @@ using BetterPinyin.Core.Settings;
 using BetterPinyin.Interop.Windowing;
 
 namespace BetterPinyin.App.Features.CloudAssist.Views;
+
+/// <summary>来源列表里的一行。</summary>
+/// <remarks>
+/// 开关直接双向绑定 <see cref="Enabled"/>，页面订阅 <see cref="PropertyChanged"/>
+/// 来刷新「还有没有来源能提供扩展词」的提示，不需要额外的 Checked 事件。
+/// </remarks>
+public sealed class CloudSourceItem : INotifyPropertyChanged
+{
+    private bool _enabled;
+
+    /// <summary>创建一行。</summary>
+    /// <param name="id">来源标识。</param>
+    /// <param name="displayName">显示名。</param>
+    /// <param name="summary">一句话说明。</param>
+    /// <param name="enabled">是否启用。</param>
+    public CloudSourceItem(string id, string displayName, string summary, bool enabled)
+    {
+        Id = id;
+        DisplayName = displayName;
+        Summary = summary;
+        _enabled = enabled;
+    }
+
+    /// <summary>来源标识，例如 <c>bing</c>。</summary>
+    public string Id { get; }
+
+    /// <summary>显示名。</summary>
+    public string DisplayName { get; }
+
+    /// <summary>一句话说明，显示在名字下面。</summary>
+    public string Summary { get; }
+
+    /// <summary>是否参与取词。</summary>
+    public bool Enabled
+    {
+        get => _enabled;
+        set
+        {
+            if (_enabled == value)
+            {
+                return;
+            }
+
+            _enabled = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enabled)));
+        }
+    }
+
+    /// <inheritdoc />
+    public event PropertyChangedEventHandler? PropertyChanged;
+}
 
 /// <summary>扩展采纳键列表里的一行。</summary>
 public sealed class ExtendedKeyItem
@@ -54,6 +107,7 @@ public partial class CloudAssistPage : Page
     private readonly CloudAssistFeature _feature;
     private readonly List<string> _diagnosticLines = new();
     private readonly ObservableCollection<ExtendedKeyItem> _extendedKeys = new();
+    private readonly ObservableCollection<CloudSourceItem> _sources = new();
 
     // 页面由导航缓存，切走再切回会再次触发 Loaded。
     // 只有第一次才把设置读进控件，否则会覆盖用户尚未保存的修改。
@@ -63,6 +117,11 @@ public partial class CloudAssistPage : Page
     private Point _dragStart;
     private ExtendedKeyItem? _dragItem;
     private bool _draggingKeys;
+
+    // 来源列表的拖动状态，与上面的采纳键列表各记各的。
+    private Point _sourceDragStart;
+    private CloudSourceItem? _sourceDragItem;
+    private bool _draggingSources;
 
     // 本次打开设置页后是否已经确认过「拼音会发给搜狗」。
     // 只记账一次：同一页里反复保存不该每次都弹框。
@@ -76,6 +135,8 @@ public partial class CloudAssistPage : Page
         InitializeComponent();
 
         ExtendedKeysList.ItemsSource = _extendedKeys;
+        SourcesList.ItemsSource = _sources;
+        _sources.CollectionChanged += (_, _) => UpdateSourceState();
 
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
@@ -191,7 +252,8 @@ public partial class CloudAssistPage : Page
             ? Settings.StrictAcceptKey
             : "Oem3";
 
-        SelectByTag(ProviderComboBox, CloudSourceCatalog.Normalize(Settings.StrictProvider));
+        LoadSources();
+        ParallelCheckBox.IsChecked = Settings.ParallelCloudQuery;
         SelectByTag(ExtendedCountComboBox, Settings.ExtendedMaxCount.ToString(CultureInfo.InvariantCulture));
         SelectByTag(ExtendedKeyModeComboBox, Settings.ExtendedKeyMode);
         SelectByTag(PlacementComboBox, Settings.OverlayPlacement);
@@ -205,36 +267,51 @@ public partial class CloudAssistPage : Page
         BlockedTextBox.Text = string.Join(", ", Settings.BlockedProcesses);
 
         UpdateKeyModeState();
-        UpdateProviderState();
+        UpdateSourceState();
     }
 
     private void OnSaveClick(object sender, RoutedEventArgs e)
     {
-        // 来源从 Bing 切到搜狗时先确认一次：拼音会离开本机。
-        var provider = CloudSourceCatalog.Normalize(TagOf(ProviderComboBox, CloudSourceCatalog.DefaultId));
-        if (provider == CloudSourceCatalog.SogouId &&
-            CloudSourceCatalog.Normalize(Settings.StrictProvider) != CloudSourceCatalog.SogouId &&
-            !_sogouNoticeAccepted)
+        // 首次启用搜狗时确认一次：拼音会离开本机。已经在用搜狗的用户不会再被打扰。
+        var sogouEnabled = _sources
+            .FirstOrDefault(item => item.Id == CloudSourceCatalog.SogouId)?.Enabled == true;
+        var sogouWasEnabled = CloudSourceCatalog
+            .ResolveEnabled(Settings.CloudSources)
+            .Contains(CloudSourceCatalog.SogouId, StringComparer.OrdinalIgnoreCase);
+
+        if (sogouEnabled && !sogouWasEnabled && !_sogouNoticeAccepted)
         {
             var confirm = MessageBox.Show(
-                "选择搜狗后，你正在输入的拼音会上传给搜狗（shouji.sogou.com）。\n\n继续切换吗？",
-                "切换云联想来源",
+                "启用搜狗后，你正在输入的拼音会上传给搜狗（shouji.sogou.com）。\n\n继续启用吗？",
+                "启用搜狗来源",
                 MessageBoxButton.OKCancel,
                 MessageBoxImage.Warning,
                 MessageBoxResult.Cancel);
 
             if (confirm != MessageBoxResult.OK)
             {
-                SelectByTag(ProviderComboBox, CloudSourceCatalog.DefaultId);
-                UpdateProviderState();
-                SaveStatusText.Text = "已取消切换来源";
+                var item = _sources.FirstOrDefault(s => s.Id == CloudSourceCatalog.SogouId);
+                if (item is not null)
+                {
+                    item.Enabled = false;
+                }
+
+                UpdateSourceState();
+                SaveStatusText.Text = "已取消启用搜狗";
                 return;
             }
 
             _sogouNoticeAccepted = true;
         }
 
-        Settings.StrictProvider = provider;
+        // UI 里的顺序就是取词优先级；归一化顺带补齐将来新增的来源（补在末尾并保持禁用）。
+        Settings.CloudSources = CloudSourceCatalog.NormalizeList(
+            _sources.Select(item => new CloudSourceSetting
+            {
+                Id = item.Id,
+                Enabled = item.Enabled,
+            }));
+        Settings.ParallelCloudQuery = ParallelCheckBox.IsChecked == true;
 
         Settings.CloudAssistEnabled = EnabledCheckBox.IsChecked == true;
         Settings.StrictEnabled = StrictCheckBox.IsChecked == true;
@@ -302,7 +379,8 @@ public partial class CloudAssistPage : Page
         Settings.CloudAssistEnabled = defaults.CloudAssistEnabled;
         Settings.StrictEnabled = defaults.StrictEnabled;
         Settings.StrictDedupeLocal = defaults.StrictDedupeLocal;
-        Settings.StrictProvider = defaults.StrictProvider;
+        Settings.CloudSources = CloudSourceCatalog.CreateDefaultList();
+        Settings.ParallelCloudQuery = defaults.ParallelCloudQuery;
         Settings.StrictAcceptKey = defaults.StrictAcceptKey;
         Settings.ExtendedEnabled = defaults.ExtendedEnabled;
         Settings.ExtendedMaxCount = defaults.ExtendedMaxCount;
@@ -331,22 +409,154 @@ public partial class CloudAssistPage : Page
             : $"已恢复，但写入配置失败：{AppServices.Store.LastError}";
     }
 
-    private void OnProviderChanged(object sender, SelectionChangedEventArgs e) => UpdateProviderState();
-
-    /// <summary>来源切到搜狗时展开隐私提示，切回 Bing 时收起。</summary>
-    private void UpdateProviderState()
+    /// <summary>把设置里的来源读进列表控件。</summary>
+    /// <remarks>
+    /// 每次重建控件行：来源只有两三个，重建比原地改绑更不容易出错；
+    /// 旧行的 PropertyChanged 先解绑，避免清空后还回调到页面。
+    /// </remarks>
+    private void LoadSources()
     {
-        if (SogouNoticeText is null || ProviderComboBox is null)
+        foreach (var item in _sources)
         {
-            // XAML 还没初始化完时 SelectionChanged 会提前触发。
+            item.PropertyChanged -= OnSourceItemChanged;
+        }
+
+        _sources.Clear();
+
+        foreach (var setting in CloudSourceCatalog.NormalizeList(Settings.CloudSources))
+        {
+            var definition = CloudSourceCatalog.Find(setting.Id);
+            if (definition is null)
+            {
+                continue;
+            }
+
+            var item = new CloudSourceItem(
+                definition.Id,
+                definition.DisplayName,
+                definition.Summary,
+                setting.Enabled);
+            item.PropertyChanged += OnSourceItemChanged;
+            _sources.Add(item);
+        }
+    }
+
+    private void OnSourceItemChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(CloudSourceItem.Enabled))
+        {
+            UpdateSourceState();
+        }
+    }
+
+    private void OnExtendedEnabledChanged(object sender, RoutedEventArgs e) => UpdateSourceState();
+
+    /// <summary>
+    /// 刷新来源相关的两处提示。
+    /// </summary>
+    /// <remarks>
+    /// 一处是隐私说明：全部关掉时换成「不会取词」，否则列出会收到拼音的接口。
+    /// 另一处是扩展云联想没有可用来源——只有声明支持扩展的来源（当前是 Bing）才能提供更长词，
+    /// 用户在设置里把它关掉时，扩展开关还开着也不会有结果，必须当场说清楚。
+    /// </remarks>
+    private void UpdateSourceState()
+    {
+        if (SourceNoticeText is null || ExtendedSourceHintText is null)
+        {
+            // XAML 还没初始化完时集合变更会提前触发。
             return;
         }
 
-        SogouNoticeText.Visibility =
-            CloudSourceCatalog.Normalize(TagOf(ProviderComboBox, CloudSourceCatalog.DefaultId)) ==
-            CloudSourceCatalog.SogouId
+        var enabled = _sources.Where(item => item.Enabled).ToList();
+        var extendedSource = enabled.FirstOrDefault(item => CloudSourceCatalog.SupportsExtended(item.Id));
+
+        SourceNoticeText.Text = enabled.Count == 0
+            ? "当前没有启用的来源，云联想不会取词。打开上面的开关即可恢复。"
+            : "启用的来源都会收到正在输入的拼音：必应（api.bing.com 等）、搜狗（shouji.sogou.com）。关掉的来源不会被请求。";
+
+        ExtendedSourceHintText.Visibility =
+            enabled.Count > 0 && extendedSource is null && ExtendedCheckBox.IsChecked == true
                 ? Visibility.Visible
                 : Visibility.Collapsed;
+    }
+
+    private void OnSourcesMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        _sourceDragItem = null;
+        _draggingSources = false;
+
+        // 点在开关上时不能启动拖动，否则会抢走它的鼠标捕获，开关点不动。
+        if (FindAncestor<ButtonBase>(e.OriginalSource as DependencyObject) is not null)
+        {
+            return;
+        }
+
+        var container = ItemsControl.ContainerFromElement(
+            SourcesList,
+            e.OriginalSource as DependencyObject) as ListBoxItem;
+
+        if (container?.DataContext is CloudSourceItem item)
+        {
+            _sourceDragItem = item;
+            _sourceDragStart = e.GetPosition(SourcesList);
+            SourcesList.CaptureMouse();
+        }
+    }
+
+    private void OnSourcesMouseMove(object sender, MouseEventArgs e)
+    {
+        if (_sourceDragItem is null || e.LeftButton != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        var position = e.GetPosition(SourcesList);
+        if (!_draggingSources &&
+            Math.Abs(position.Y - _sourceDragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+        {
+            return;
+        }
+
+        _draggingSources = true;
+
+        var target = SourceItemAt(position);
+        if (target is null || ReferenceEquals(target, _sourceDragItem))
+        {
+            return;
+        }
+
+        var oldIndex = _sources.IndexOf(_sourceDragItem);
+        var newIndex = _sources.IndexOf(target);
+        if (oldIndex < 0 || newIndex < 0 || oldIndex == newIndex)
+        {
+            return;
+        }
+
+        _sources.Move(oldIndex, newIndex);
+        UpdateSourceState();
+    }
+
+    private void OnSourcesMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (_sourceDragItem is not null)
+        {
+            _sourceDragItem = null;
+            _draggingSources = false;
+            SourcesList.ReleaseMouseCapture();
+        }
+    }
+
+    private void OnSourcesLostCapture(object sender, MouseEventArgs e)
+    {
+        _sourceDragItem = null;
+        _draggingSources = false;
+    }
+
+    private CloudSourceItem? SourceItemAt(Point position)
+    {
+        var hit = SourcesList.InputHitTest(position) as DependencyObject;
+        var container = ItemsControl.ContainerFromElement(SourcesList, hit) as ListBoxItem;
+        return container?.DataContext as CloudSourceItem;
     }
 
     private void OnKeyModeChanged(object sender, SelectionChangedEventArgs e) => UpdateKeyModeState();

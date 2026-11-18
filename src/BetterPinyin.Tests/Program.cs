@@ -125,9 +125,15 @@ internal static class Program
             ?? "yisitalu";
         var matcher = new PinyinMatcher(lexicon);
 
+        // 简拼展开默认只列前 4 条（与线上一致），排查「明明词库里有却展不开」时要看全量。
+        var expandArg = args.FirstOrDefault(a => a.StartsWith("--expand=", StringComparison.OrdinalIgnoreCase));
+        var expandLimit = expandArg is not null && int.TryParse(expandArg["--expand=".Length..], out var parsed)
+            ? Math.Clamp(parsed, 1, 200)
+            : 4;
+
         Console.WriteLine($"输入：{query}");
         Console.WriteLine($"音节切分：{(SyllableTable.Default.TrySegment(query, true, out var count) ? $"{count} 个音节" : "无法切分（可能是简拼）")}");
-        Console.WriteLine($"简拼展开：{string.Join(" / ", lexicon.ExpandAbbreviation(query, 4))}");
+        Console.WriteLine($"简拼展开（前 {expandLimit} 条）：{string.Join(" / ", lexicon.ExpandAbbreviation(query, expandLimit))}");
         Console.WriteLine();
 
         foreach (var candidate in args.Where(a => a.StartsWith("candidate=", StringComparison.OrdinalIgnoreCase)))

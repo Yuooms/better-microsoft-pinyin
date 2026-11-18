@@ -40,14 +40,34 @@ public sealed class AppSettings
     public bool StrictDedupeLocal { get; set; } = true;
 
     /// <summary>
-    /// 云联想（严格槽）的词源：<c>bing</c> 或 <c>sogou</c>。
+    /// 旧版的单选来源：<c>bing</c> 或 <c>sogou</c>。
     /// </summary>
     /// <remarks>
-    /// 只影响严格槽，扩展云联想固定用 Bing。
-    /// 取值由 <see cref="Cloud.CloudSourceCatalog.Normalize"/> 归一化：老配置没有这个键、
-    /// 或值非法时都按 <c>bing</c> 处理，因此不需要迁移代码。
+    /// 只用于把老配置迁移到 <see cref="CloudSources"/>。读取后由
+    /// <see cref="CloudSourceCatalog.NormalizeList"/> 消费并置空，保存时不再写回，
+    /// 所以新配置里不会出现这个键。不要在新代码里读它。
     /// </remarks>
-    public string StrictProvider { get; set; } = Cloud.CloudSourceCatalog.DefaultId;
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? StrictProvider { get; set; }
+
+    /// <summary>
+    /// 云联想来源，按顺序尝试；顺序即优先级。
+    /// </summary>
+    /// <remarks>
+    /// 空列表表示「还没迁移过」：首次运行或从旧版升级都走这里，
+    /// 由 <see cref="CloudSourceCatalog.NormalizeList"/> 按 <see cref="StrictProvider"/>
+    /// 或默认值补齐。读取后一定非空。
+    /// </remarks>
+    public List<Cloud.CloudSourceSetting> CloudSources { get; set; } = new();
+
+    /// <summary>
+    /// 多个来源启用时是否并行查询。
+    /// </summary>
+    /// <remarks>
+    /// 默认并行：延迟取较慢的那条，而不是相加。关闭后按来源顺序逐个查询，
+    /// 前面的来源给出结果就不再问后面的——省流量，但最坏多一次往返。
+    /// </remarks>
+    public bool ParallelCloudQuery { get; set; } = true;
 
     /// <summary>
     /// 是否启用「扩展云联想」（输入是前缀的更长词）。
@@ -273,18 +293,17 @@ public sealed class SettingsStore
             if (!File.Exists(_filePath))
             {
                 // 新配置直接用系统默认样式，标记已应用，之后保存不会触发迁移。
-                return new AppSettings { PopupStyleDefaultApplied = true };
+                return Prepare(new AppSettings { PopupStyleDefaultApplied = true });
             }
 
             var json = File.ReadAllText(_filePath);
             if (string.IsNullOrWhiteSpace(json))
             {
-                return new AppSettings { PopupStyleDefaultApplied = true };
+                return Prepare(new AppSettings { PopupStyleDefaultApplied = true });
             }
 
             var settings = JsonSerializer.Deserialize<AppSettings>(json, SerializerOptions)
                 ?? new AppSettings { PopupStyleDefaultApplied = true };
-
             // 旧配置只有 Card / Acrylic 两个值；Acrylic 已被经典样式取代。
             // 归一化放在读取处，保存路径不受影响，用户在设置里选什么就存什么。
             settings.PopupStyle = PopupStyleCatalog.Normalize(settings.PopupStyle);
@@ -302,14 +321,31 @@ public sealed class SettingsStore
                 settings.PopupStyleDefaultApplied = true;
             }
 
-            return settings;
+            return Prepare(settings);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
         {
             // 配置损坏不能让程序起不来，退回默认值并把原因留给诊断页。
             LastError = $"{ex.GetType().Name}: {ex.Message}";
-            return new AppSettings { PopupStyleDefaultApplied = true };
+            return Prepare(new AppSettings { PopupStyleDefaultApplied = true });
         }
+    }
+
+    /// <summary>把旧配置里的单选来源迁移成有序列表，并清掉旧字段。</summary>
+    /// <param name="settings">刚从文件读出的设置。</param>
+    /// <returns>同一个对象，便于链式返回。</returns>
+    /// <remarks>
+    /// 放在读取处而不是保存处：老的 settings.json 里只有 <c>StrictProvider</c>，
+    /// 迁移后要让内存里的设置立刻可用，用户即使不打开设置页也不会退回默认来源。
+    /// 置空旧字段后，下一次保存就不会再写出它。
+    /// </remarks>
+    private static AppSettings Prepare(AppSettings settings)
+    {
+        settings.CloudSources = Cloud.CloudSourceCatalog.NormalizeList(
+            settings.CloudSources,
+            settings.StrictProvider);
+        settings.StrictProvider = null;
+        return settings;
     }
 
     /// <summary>

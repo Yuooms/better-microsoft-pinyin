@@ -515,69 +515,39 @@ internal sealed class CloudAssistController : IDisposable
                 }
             }
 
+            var sources = CloudSourceCatalog.ResolveEnabled(_settings.CloudSources);
+            if (sources.Count == 0)
+            {
+                // 用户把所有来源都关了：不请求任何接口，也不留上一轮的浮窗。
+                Report($"{raw}：没有启用的云联想来源");
+                Clear();
+                return;
+            }
+
             SuggestionSet? lastSet = null;
             var rawCount = 0;
-            var strictSourceId = CloudSourceCatalog.Normalize(_settings.StrictProvider);
 
             foreach (var request in requests)
             {
-                SuggestionSet attempt;
+                var answer = await QuerySourcesAsync(
+                        request, local, options, snapshot, wordbook, sources, cancellationToken)
+                    .ConfigureAwait(false);
+                rawCount += answer.RawCount;
 
-                if (strictSourceId == CloudSourceCatalog.SogouId)
+                if (cancellationToken.IsCancellationRequested || version != _tracker.Version)
                 {
-                    var dual = await QueryDualSourceAsync(
-                            request, local, options, snapshot, wordbook, cancellationToken)
-                        .ConfigureAwait(false);
-                    rawCount += dual.RawCount;
-
-                    if (cancellationToken.IsCancellationRequested || version != _tracker.Version)
-                    {
-                        return;
-                    }
-
-                    attempt = dual.Set;
-                }
-                else
-                {
-                    var answer = await _bing.QueryAsync(request, cancellationToken).ConfigureAwait(false);
-                    rawCount += answer.Items.Count;
-
-                    if (cancellationToken.IsCancellationRequested || version != _tracker.Version)
-                    {
-                        return;
-                    }
-
-                    // 回显比对要用本次实际请求的串：简拼展开后请求的是全拼（rineiwa），不是 raw（rnw）。
-                    // 被遗忘的词在这里就剔掉，不让它进入后续分区。
-                    var cleaned = ResultSanitizer.Sanitize(
-                        answer.Items,
-                        request,
-                        SanitizeOptions.Extended,
-                        AppServices.Wordbook.HiddenTexts);
-
-                    // 分区同样必须用实际请求串。拿 raw 校验时，rnw（3 个字母）永远匹配不上
-                    // 「日内瓦公约」（5 个音节），整个批次会被判成 None 丢掉。
-                    attempt = SuggestionSelector.Select(
-                        request,
-                        cleaned,
-                        local,
-                        _matcher,
-                        options,
-                        snapshot.Items.Count,
-                        snapshot.Quality == CandidateReadQuality.Exact,
-                        answer.SourceId,
-                        wordbook);
+                    return;
                 }
 
-                lastSet = attempt;
+                lastSet = answer.Set;
 
                 // 这条展开串分不出槽位就继续试下一条，别让词库里的劣质展开挡住正确结果。
-                if (attempt.IsEmpty)
+                if (answer.Set.IsEmpty)
                 {
                     continue;
                 }
 
-                Publish(attempt, raw, version, mode, anchorPoint, snapshot, DescribeSources(attempt));
+                Publish(answer.Set, raw, version, mode, anchorPoint, snapshot, DescribeSources(answer.Set));
                 return;
             }
 
@@ -594,20 +564,111 @@ internal sealed class CloudAssistController : IDisposable
         }
     }
 
+    /// <summary>一个来源本次查询的结果。</summary>
+    /// <param name="SupportsExtended">这个来源是否参与扩展槽。</param>
+    /// <param name="Set">按读音分区后的候选。</param>
+    /// <param name="RawCount">云端返回的原始条数，仅用于诊断。</param>
+    private readonly record struct SourceAnswer(
+        bool SupportsExtended,
+        SuggestionSet Set,
+        int RawCount);
+
     /// <summary>
-    /// 双源查询：严格槽查用户选择的来源，扩展槽查 Bing。
+    /// 按用户设定的顺序，从启用的来源里取词。
     /// </summary>
     /// <remarks>
     /// <para>
-    /// 两条请求并行发出，总延迟取较大者而不是相加。
+    /// 严格槽取「第一个给出整词」的来源，扩展槽取「第一个支持扩展且给出更长词」的来源；
+    /// 两者可以是不同来源，最后合并。顺序就是设置页里列表的顺序，拖动即可调整。
     /// </para>
     /// <para>
-    /// 扩展云联想关闭时根本不请求 Bing：用户选了别的来源，就不该再把拼音发给 Bing；
-    /// 这时严格槽也只在所选来源里找，取不到就空着，不偷偷回退。
-    /// 只有扩展开启、Bing 响应已经在手时，才拿它的严格槽做零成本回退。
+    /// 并行模式同时请求所有启用来源，延迟取较慢的那条；串行模式逐个请求，
+    /// 两个槽都有着落就不再问后面的来源。禁用来源在任何模式下都不会收到请求。
     /// </para>
     /// </remarks>
-    private async Task<(SuggestionSet Set, int RawCount)> QueryDualSourceAsync(
+    private async Task<(SuggestionSet Set, int RawCount)> QuerySourcesAsync(
+        string request,
+        IReadOnlyList<string> local,
+        SuggestionSelectionOptions options,
+        CandidateWindowSnapshot snapshot,
+        IReadOnlyList<string> wordbook,
+        IReadOnlyList<string> sources,
+        CancellationToken cancellationToken)
+    {
+        var answers = new List<SourceAnswer>(sources.Count);
+
+        if (_settings.ParallelCloudQuery)
+        {
+            var tasks = new Task<SourceAnswer>[sources.Count];
+            for (var i = 0; i < sources.Count; i++)
+            {
+                tasks[i] = QueryOneAsync(
+                    sources[i], request, local, options, snapshot, wordbook, cancellationToken);
+            }
+
+            answers.AddRange(await Task.WhenAll(tasks).ConfigureAwait(false));
+        }
+        else
+        {
+            foreach (var source in sources)
+            {
+                var needStrict = options.StrictEnabled && !answers.Exists(a => a.Set.Strict is not null);
+                var needExtended = options.ExtendedEnabled &&
+                                   !answers.Exists(a => a.SupportsExtended && a.Set.Extended.Count > 0);
+
+                // 两个槽都有结果了，后面的来源不必再问——这正是串行模式省流量的地方。
+                if (!needStrict && !needExtended)
+                {
+                    break;
+                }
+
+                answers.Add(await QueryOneAsync(
+                        source, request, local, options, snapshot, wordbook, cancellationToken)
+                    .ConfigureAwait(false));
+            }
+        }
+
+        SuggestionSet? strictSet = null;
+        SuggestionSet? extendedSet = null;
+        var rawCount = 0;
+
+        // answers 与 sources 同序（WhenAll 保序，串行是追加），这里就是用户的优先级。
+        foreach (var answer in answers)
+        {
+            rawCount += answer.RawCount;
+
+            if (strictSet is null && answer.Set.Strict is not null)
+            {
+                strictSet = answer.Set;
+            }
+
+            if (extendedSet is null && answer.SupportsExtended && answer.Set.Extended.Count > 0)
+            {
+                extendedSet = answer.Set;
+            }
+        }
+
+        if (!options.ExtendedEnabled || extendedSet is null)
+        {
+            return (strictSet ?? SuggestionSet.Empty, rawCount);
+        }
+
+        if (strictSet is null)
+        {
+            return (extendedSet, rawCount);
+        }
+
+        return (SuggestionSelector.Combine(strictSet, extendedSet), rawCount);
+    }
+
+    /// <summary>查一个来源并分区。</summary>
+    /// <param name="sourceId">来源标识，调用方保证已归一化。</param>
+    /// <remarks>
+    /// 不支持扩展的来源强制关掉扩展分区：它返回的长词不是「以输入为前缀的联想」，
+    /// 混进扩展槽会让用户看到来历不明的候选。
+    /// </remarks>
+    private async Task<SourceAnswer> QueryOneAsync(
+        string sourceId,
         string request,
         IReadOnlyList<string> local,
         SuggestionSelectionOptions options,
@@ -615,55 +676,30 @@ internal sealed class CloudAssistController : IDisposable
         IReadOnlyList<string> wordbook,
         CancellationToken cancellationToken)
     {
-        // 严格云联想关掉时也不必问搜狗，只查 Bing 的扩展槽。
-        var strictTask = options.StrictEnabled
-            ? _sogou.QueryAsync(request, cancellationToken)
-            : Task.FromResult(CloudProviderAnswer.Empty(CloudSourceCatalog.SogouId));
-        var extendedTask = options.ExtendedEnabled
-            ? _bing.QueryAsync(request, cancellationToken)
-            : Task.FromResult(CloudProviderAnswer.Empty(CloudSourceCatalog.BingId));
+        ICloudSuggestionProvider provider =
+            sourceId == CloudSourceCatalog.SogouId ? _sogou : _bing;
+        var answer = await provider.QueryAsync(request, cancellationToken).ConfigureAwait(false);
+        var supportsExtended = CloudSourceCatalog.SupportsExtended(sourceId);
+        var selectionOptions = supportsExtended
+            ? options
+            : options with { ExtendedEnabled = false };
 
-        await Task.WhenAll(strictTask, extendedTask).ConfigureAwait(false);
-
-        var strictAnswer = await strictTask.ConfigureAwait(false);
-        var extendedAnswer = await extendedTask.ConfigureAwait(false);
-        var hidden = AppServices.Wordbook.HiddenTexts;
-
-        var strictSet = SuggestionSelector.Select(
+        var set = SuggestionSelector.Select(
             request,
-            ResultSanitizer.Sanitize(strictAnswer.Items, request, SanitizeOptions.Extended, hidden),
+            ResultSanitizer.Sanitize(
+                answer.Items,
+                request,
+                SanitizeOptions.Extended,
+                AppServices.Wordbook.HiddenTexts),
             local,
             _matcher,
-            options with { ExtendedEnabled = false },
+            selectionOptions,
             snapshot.Items.Count,
             snapshot.Quality == CandidateReadQuality.Exact,
-            strictAnswer.SourceId,
+            answer.SourceId,
             wordbook);
 
-        if (!options.ExtendedEnabled)
-        {
-            return (strictSet, strictAnswer.Items.Count);
-        }
-
-        var extendedSet = SuggestionSelector.Select(
-            request,
-            ResultSanitizer.Sanitize(extendedAnswer.Items, request, SanitizeOptions.Extended, hidden),
-            local,
-            _matcher,
-            options,
-            snapshot.Items.Count,
-            snapshot.Quality == CandidateReadQuality.Exact,
-            extendedAnswer.SourceId,
-            wordbook);
-
-        // Bing 的响应已经在手，严格槽用它顶上不产生额外请求，候选上的来源标识仍记真实出处。
-        var merged = strictSet.Strict is null && extendedSet.Strict is not null
-            ? strictSet with { Strict = extendedSet.Strict }
-            : strictSet;
-
-        return (
-            SuggestionSelector.Combine(merged, extendedSet),
-            strictAnswer.Items.Count + extendedAnswer.Items.Count);
+        return new SourceAnswer(supportsExtended, set, answer.Items.Count);
     }
 
     /// <summary>把两个槽各自的来源拼成一行人话，用于诊断。</summary>

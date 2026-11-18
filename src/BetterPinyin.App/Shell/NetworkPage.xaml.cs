@@ -56,7 +56,17 @@ public partial class NetworkPage : Page
     {
         SettingsPanel.Children.Clear();
 
-        AddInfoText($"云联想来源：{CloudSourceCatalog.DisplayName(AppServices.Settings.StrictProvider)}（扩展云联想固定 Bing）");
+        var enabled = CloudSourceCatalog.ResolveEnabled(AppServices.Settings.CloudSources);
+        var order = enabled.Count == 0
+            ? "全部关闭"
+            : string.Join(" → ", enabled.Select(CloudSourceCatalog.DisplayName));
+        var extendedSource = enabled.FirstOrDefault(CloudSourceCatalog.SupportsExtended);
+
+        AddInfoText($"云联想来源：{order}");
+        AddInfoText(extendedSource is null
+            ? "扩展云联想：没有支持扩展的来源，不会显示"
+            : $"扩展云联想：由 {CloudSourceCatalog.DisplayName(extendedSource)} 提供");
+        AddInfoText($"请求方式：{(AppServices.Settings.ParallelCloudQuery ? "并行查询所有启用来源" : "按顺序逐个查询，有结果就停")}");
         AddInfoText($"端点策略：{AppServices.Settings.EndpointMode}（自动模式下按体检结果依次尝试）");
         AddInfoText($"代理：{AppServices.Settings.ProxyMode}");
         AddInfoText($"请求超时：{AppServices.Settings.RequestTimeoutMs} 毫秒");
