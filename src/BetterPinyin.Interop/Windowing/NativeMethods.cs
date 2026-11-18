@@ -550,6 +550,24 @@ public static class NativeMethods
 
         return GetForegroundWindow() == hWnd;
     }
+
+    /// <summary>
+    /// 把本进程的工作集交还给系统。
+    /// </summary>
+    /// <param name="process">进程句柄，需带 <c>PROCESS_SET_QUOTA</c> 权限。</param>
+    /// <param name="minimumWorkingSetSize">最小值；传 -1 表示「尽量小」。</param>
+    /// <param name="maximumWorkingSetSize">最大值；传 -1 表示「尽量小」。</param>
+    /// <returns>是否成功。</returns>
+    /// <remarks>
+    /// 两个参数都传 -1 是文档化的「清空工作集」用法：把可换出的页标记为可回收，
+    /// 物理内存立刻交还系统。页本身没有被丢弃，下次访问会重新调页进来，
+    /// 因此只适合在确定要闲置一段时间时调用，不能放在按键路径上。
+    /// </remarks>
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern bool SetProcessWorkingSetSize(
+        IntPtr process,
+        IntPtr minimumWorkingSetSize,
+        IntPtr maximumWorkingSetSize);
 }
 
 /// <summary>窗口消息结构（MSG）。</summary>

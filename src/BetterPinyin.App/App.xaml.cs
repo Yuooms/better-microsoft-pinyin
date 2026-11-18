@@ -51,6 +51,11 @@ public partial class App : Application
 
         try
         {
+            // 内存诊断要在最早处打开：第一行基线代表「运行时 + WPF 自身」的固定开销，
+            // 后面每个阶段与它相减才是这项功能真正加了多少。
+            MemoryReport.Enabled = e.Args.Any(
+                arg => arg.Equals("--mem", StringComparison.OrdinalIgnoreCase));
+
             if (!AcquireSingleInstance())
             {
                 // 已经在运行：直接把那个实例的设置窗口叫到前台。
@@ -83,6 +88,7 @@ public partial class App : Application
 
             AppServices.Initialize();
             Log.Write($"设置已加载：{AppServices.Store.FilePath}；UIA 可用={AppServices.UiaAvailable}");
+            MemoryReport.Mark("共享服务（词库 + 用户词库 + UIA）");
 
             // 主题必须在创建任何窗口之前定下来：窗口的 SourceInitialized 会读当前主题
             // 去设标题栏与背景材质。
@@ -100,6 +106,7 @@ public partial class App : Application
             // 启动调用要在任何窗口创建之前，运行期只换主题字典，避免动到候选浮窗。
             FluentThemeBridge.ApplyStartup(ThemeManager.IsDark);
             ThemeManager.ThemeChanged += OnThemeChanged;
+            MemoryReport.Mark("主题字典（WPF-UI Fluent）");
 
             SystemTheme.Start();
 
@@ -123,6 +130,7 @@ public partial class App : Application
                 onToggle: OnToggleEnabled,
                 onExit: Shutdown,
                 initiallyEnabled: AppServices.Settings.CloudAssistEnabled);
+            MemoryReport.Mark("托盘图标（WinForms）");
 
             // 用户不一定开着设置页：检测到高权限程序时用气泡告知，点一下直达云联想页。
             _cloudAssist.ElevatedAppDetected += OnElevatedAppDetected;
@@ -132,6 +140,12 @@ public partial class App : Application
 
             // 更新检查同样放到后台：网络慢的时候不能挡住设置窗口出现。
             ScheduleUpdateCheck();
+
+            // 开机自启动的场景里没人会开设置窗口，启动完成后这 100 多 MB 工作集
+            // 就是纯白占；半分钟足够让首轮初始化（词库、钩子、UIA）稳定下来，再交还系统。
+            // 巡检负责长期闲置（打完字放置、关掉设置窗口后不再操作）的那部分。
+            WorkingSetTrimmer.StartIdleWatch();
+            WorkingSetTrimmer.Schedule(WorkingSetTrimmer.StartupDelayMilliseconds);
 
             // --page=外观 可直达某一页，--settings 只是「现在就打开设置」的显式写法。
             _startupPage = e.Args
@@ -340,6 +354,7 @@ public partial class App : Application
         {
             await _registry.StartAllAsync().ConfigureAwait(true);
             Log.Write("功能模块已启动");
+            MemoryReport.Mark("功能模块（键盘钩子 + 候选浮窗）");
         }
         catch (Exception ex)
         {
@@ -365,7 +380,14 @@ public partial class App : Application
             if (_settingsWindow is null || !_settingsWindow.IsLoaded)
             {
                 _settingsWindow = new SettingsWindow(_registry!);
-                _settingsWindow.Closed += (_, _) => _settingsWindow = null;
+                _settingsWindow.Closed += (_, _) =>
+                {
+                    _settingsWindow = null;
+
+                    // 关窗后 WPF 的渲染设施仍留在进程里（约 60 MB），对一个常驻托盘的程序
+                    // 没有用处。等几秒确认没有新窗口，就把这部分工作集交还系统。
+                    WorkingSetTrimmer.Schedule();
+                };
             }
 
             _settingsWindow.Show();

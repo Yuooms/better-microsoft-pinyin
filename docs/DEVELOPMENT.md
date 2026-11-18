@@ -197,6 +197,29 @@ dotnet run --project tools/ImeProbe -- --wordbook
 
 `BetterPinyin.Tests -- --probe <拼音> candidate=<候选>` 可以单独观察某个候选的读音判定结果（`Strict` / `Extended` / `None`），排查"为什么这个词没出现"时最直接。
 
+## 内存诊断：`--mem`
+
+怀疑内存占用异常时，用它把每个启动阶段的内存快照写进日志：
+
+```bash
+./src/BetterPinyin.App/bin/Release/net8.0-windows/BetterMicrosoftPinyin.exe --autostart --mem
+# 日志里会多出这些行，相邻两行相减就是该阶段的开销
+# [内存] 基线：私有 19.5 MB / 工作集 58.6 MB / 托管 6.3 MB / 线程 8 / 句柄 262
+# [内存] 共享服务（词库 + 用户词库 + UIA）：私有 26.4 MB / ...
+```
+
+同时会记录 `[内存] 工作集已交还系统：101.0 MB → 1.6 MB`，用来确认闲置裁剪有没有生效。
+逐项拆解与结论见[技术笔记第三十三节](TECH-NOTES.md)。
+
+想看托管堆的实时曲线，可以挂 `dotnet-counters`（一次性安装：`dotnet tool install -g dotnet-counters`）：
+
+```bash
+dotnet-counters collect -p <PID> --counters System.Runtime --duration 3 --format csv -o mem.csv
+```
+
+判定标准：`GC Heap Size` 只有十几兆是正常的；它不涨而进程内存涨，说明增长在原生侧
+（WPF 渲染设施、UIA 的 COM 对象），不要往业务代码里找。
+
 ## 内置词库
 
 `assets/lexicon.bin` 是构建产物，随仓库提交，所以 clone 后直接 `dotnet build` 即可。需要重新生成时：

@@ -85,7 +85,6 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
         }
 
         _started = true;
-        _window = new CloudCandidateWindow(_settings.PopupStyle);
 
         _controller.SuggestionsReady += OnSuggestionsReady;
         _controller.SuggestionsCleared += OnSuggestionsCleared;
@@ -124,12 +123,10 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
         _controller.Stop();
         _elevatedWatch.Stop();
 
-        if (_window is not null)
-        {
-            _window.HideSuggestion();
-            _window.Close();
-            _window = null;
-        }
+        // 窗口可能还没建（惰性创建），关掉功能时顺手把它一起收掉。
+        _window?.HideSuggestion();
+        _window?.Close();
+        _window = null;
 
         return Task.CompletedTask;
     }
@@ -196,12 +193,23 @@ internal sealed class CloudAssistFeature : IFeatureModule, IDisposable
         _controller.Dispose();
     }
 
+    /// <summary>
+    /// 浮窗按需创建：第一次真的有关联想要显示时才建。
+    /// </summary>
+    /// <remarks>
+    /// 构造一个 WPF 窗口会在进程里拉起渲染相关的设施（窗口句柄、渲染目标、
+    /// 分层窗口样式），而绝大多数会话里用户可能一次都不看浮窗。等到第一次有词
+    /// 要显示时再建，托盘常驻状态就少一份固定开销；代价是第一次显示多几毫秒，
+    /// 而这条路径本来就在等一次网络往返，感知不到。
+    /// </remarks>
+    private CloudCandidateWindow Window => _window ??= new CloudCandidateWindow(_settings.PopupStyle);
+
     private void OnSuggestionsReady(object? sender, CloudSuggestionsShownEventArgs e)
     {
-        // 事件来自后台线程，必须切回 UI 线程操作窗口。
+        // 事件来自后台线程，必须切回 UI 线程操作窗口（浮窗也是在这一刻才第一次创建）。
         Application.Current?.Dispatcher.BeginInvoke(() =>
         {
-            _window?.ShowSuggestions(e.Slots, e.Anchor, e.EnglishMode, _settings);
+            Window.ShowSuggestions(e.Slots, e.Anchor, e.EnglishMode, _settings);
         });
     }
 
