@@ -6,28 +6,23 @@
       FontFamily="Microsoft YaHei UI, Segoe UI">
 
     <DockPanel>
-        <!-- 保存条固定在底部：页面再长也不用滚到底才能保存 -->
+        <!-- 没有保存按钮：改动即时写入并生效，这里只留恢复默认与状态提示 -->
         <Border DockPanel.Dock="Bottom"
                 Background="{DynamicResource SurfaceBrush}"
                 BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="0,1,0,0"
                 Padding="42,12">
             <StackPanel Orientation="Horizontal">
-                <fl:Button x:Name="SaveButton"
-                           Content="保存并应用"
-                           Appearance="Primary"
-                           MinWidth="120"
-                           Click="OnSaveClick" />
                 <fl:Button Content="恢复默认"
                            Appearance="Secondary"
                            MinWidth="100"
-                           Margin="8,0,0,0"
                            Click="OnResetClick" />
                 <TextBlock x:Name="SaveStatusText"
                            VerticalAlignment="Center"
                            Margin="12,0,0,0"
                            Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" />
+                           TextWrapping="Wrap"
+                           Text="改动会立即生效并自动保存" />
             </StackPanel>
         </Border>
 
@@ -88,6 +83,8 @@
                                             ui:SettingRow.Description="关闭后不查询云端，但仍保留托盘图标与设置界面。"
                                             ui:SettingRow.ShowDivider="False">
                         <fl:ToggleSwitch x:Name="EnabledCheckBox"
+                                         Checked="OnSettingChanged"
+                                         Unchecked="OnSettingChanged"
                                          AutomationProperties.Name="启用云联想" />
                     </HeaderedContentControl>
                 </Border>
@@ -99,6 +96,8 @@
                                                 Header="启用云联想"
                                                 ui:SettingRow.Description="候选必须与输入的字数完全相等。例如 lianxiang 只会给出「联想」，不会给出「联想电脑管家」。">
                             <fl:ToggleSwitch x:Name="StrictCheckBox"
+                                             Checked="OnSettingChanged"
+                                             Unchecked="OnSettingChanged"
                                              AutomationProperties.Name="启用云联想" />
                         </HeaderedContentControl>
 
@@ -189,13 +188,15 @@
                                                 Header="并行查询所有启用的来源"
                                                 ui:SettingRow.Description="同时请求所有启用的来源，延迟取较慢的那条。关闭后按顺序逐个查询，前面的来源有结果就不再问后面的——更省流量，但双源都启用时最坏多一次往返。">
                             <fl:ToggleSwitch x:Name="ParallelCheckBox"
+                                             Checked="OnSettingChanged"
+                                             Unchecked="OnSettingChanged"
                                              AutomationProperties.Name="并行查询所有启用的来源" />
                         </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="采纳键"
                                                 ui:SettingRow.Description="点一下方框，然后按下想用的键。字母、空格、回车不能用；Tab 会调出 Bing 搜索，数字会盖过输入法同号候选。">
-                            <ui:KeyCaptureBox x:Name="StrictKeyBox" Width="220" />
+                            <ui:KeyCaptureBox x:Name="StrictKeyBox" Width="220" KeyCaptured="OnStrictKeyCaptured" />
                         </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
@@ -203,6 +204,8 @@
                                                 ui:SettingRow.Description="本地已经能选到的词不再重复展示，避免云联想没有带来新信息。"
                                                 ui:SettingRow.ShowDivider="False">
                             <fl:ToggleSwitch x:Name="StrictDedupeCheckBox"
+                                             Checked="OnSettingChanged"
+                                             Unchecked="OnSettingChanged"
                                              AutomationProperties.Name="候选已在本地候选里时不显示" />
                         </HeaderedContentControl>
                     </StackPanel>
@@ -238,7 +241,7 @@
                                                 Style="{StaticResource SettingRow}"
                                                 Header="显示条数"
                                                 ui:SettingRow.Description="自动模式下最多显示几条扩展候选。">
-                            <ComboBox x:Name="ExtendedCountComboBox" Width="100">
+                            <ComboBox x:Name="ExtendedCountComboBox" Width="100" SelectionChanged="OnSettingChanged">
                                 <ComboBoxItem Content="1 条" Tag="1" />
                                 <ComboBoxItem Content="2 条" Tag="2" />
                                 <ComboBoxItem Content="3 条" Tag="3" />
@@ -355,7 +358,7 @@
                     <StackPanel>
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="浮窗位置">
-                            <ComboBox x:Name="PlacementComboBox" Width="160">
+                            <ComboBox x:Name="PlacementComboBox" Width="160" SelectionChanged="OnSettingChanged">
                                 <ComboBoxItem Content="候选窗下方" Tag="Below" />
                                 <ComboBoxItem Content="候选窗左侧" Tag="Left" />
                             </ComboBox>
@@ -364,7 +367,7 @@
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="浮窗样式"
                                                 ui:SettingRow.Description="纯白卡片是圆角实色，贴近 Windows 11 输入法；经典是直角实色，贴近 Windows 10 输入法。">
-                            <ComboBox x:Name="PopupStyleComboBox" Width="160">
+                            <ComboBox x:Name="PopupStyleComboBox" Width="160" SelectionChanged="OnSettingChanged">
                                 <ComboBoxItem Content="纯白卡片" Tag="Card" />
                                 <ComboBoxItem Content="经典" Tag="Classic" />
                             </ComboBox>
@@ -374,6 +377,8 @@
                                                 Header="浮窗显示云图标"
                                                 ui:SettingRow.ShowDivider="False">
                             <fl:ToggleSwitch x:Name="ShowCloudIconCheckBox"
+                                             Checked="OnSettingChanged"
+                                             Unchecked="OnSettingChanged"
                                              AutomationProperties.Name="浮窗显示云图标" />
                         </HeaderedContentControl>
                     </StackPanel>
@@ -386,12 +391,14 @@
                                                 Header="英文状态下也联想"
                                                 ui:SettingRow.Description="默认关闭。开启后，在微软拼音的英文状态打拼音也会出候选；采纳时会先删掉已输入的字母，删除前会校验文本确实是刚输入的内容，校验不通过则放弃。">
                             <fl:ToggleSwitch x:Name="EnglishCheckBox"
+                                             Checked="OnSettingChanged"
+                                             Unchecked="OnSettingChanged"
                                              AutomationProperties.Name="英文状态下也联想" />
                         </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="英文模式采纳">
-                            <ComboBox x:Name="EnglishCommitComboBox" Width="220">
+                            <ComboBox x:Name="EnglishCommitComboBox" Width="220" SelectionChanged="OnSettingChanged">
                                 <ComboBoxItem Content="删除已输入字母后上屏" Tag="Replace" />
                                 <ComboBoxItem Content="仅提示，不上屏" Tag="Preview" />
                             </ComboBox>
@@ -399,19 +406,25 @@
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="最小输入长度">
-                            <TextBox x:Name="MinLengthTextBox" Width="100" />
+                            <TextBox x:Name="MinLengthTextBox" Width="100"
+                                 TextChanged="OnTextSettingChanged"
+                                 LostFocus="OnSettingChanged" />
                         </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="停手等待（毫秒）"
                                                 ui:SettingRow.Description="停止输入后等待这么久再发请求。太短会浪费请求，太长会让用户觉得慢。">
-                            <TextBox x:Name="DebounceTextBox" Width="100" />
+                            <TextBox x:Name="DebounceTextBox" Width="100"
+                                 TextChanged="OnTextSettingChanged"
+                                 LostFocus="OnSettingChanged" />
                         </HeaderedContentControl>
 
                         <HeaderedContentControl Style="{StaticResource SettingRow}"
                                                 Header="请求超时（毫秒）"
                                                 ui:SettingRow.ShowDivider="False">
-                            <TextBox x:Name="TimeoutTextBox" Width="100" />
+                            <TextBox x:Name="TimeoutTextBox" Width="100"
+                                 TextChanged="OnTextSettingChanged"
+                                 LostFocus="OnSettingChanged" />
                         </HeaderedContentControl>
                     </StackPanel>
                 </Border>
@@ -423,6 +436,8 @@
                                                 Header="按模糊音校验读音"
                                                 ui:SettingRow.Description="z/zh、n/l、前后鼻音等按同一类处理，与微软拼音的模糊音设置保持一致。">
                             <fl:ToggleSwitch x:Name="FuzzyCheckBox"
+                                             Checked="OnSettingChanged"
+                                             Unchecked="OnSettingChanged"
                                              AutomationProperties.Name="按模糊音校验读音" />
                         </HeaderedContentControl>
 
@@ -431,6 +446,8 @@
                                                 ui:SettingRow.Description="开启后按键串不是全拼，云联想会自动停用。"
                                                 ui:SettingRow.ShowDivider="False">
                             <fl:ToggleSwitch x:Name="DoublePinyinCheckBox"
+                                             Checked="OnSettingChanged"
+                                             Unchecked="OnSettingChanged"
                                              AutomationProperties.Name="使用双拼" />
                         </HeaderedContentControl>
                     </StackPanel>
@@ -443,6 +460,8 @@
                                             ui:SettingRow.Description="不含 .exe，用逗号或换行分隔，例如 mstsc, game。"
                                             ui:SettingRow.ShowDivider="False">
                         <TextBox x:Name="BlockedTextBox" Width="240" Height="88"
+                                 TextChanged="OnTextSettingChanged"
+                                 LostFocus="OnSettingChanged"
                                  AcceptsReturn="True" TextWrapping="Wrap"
                                  VerticalContentAlignment="Top"
                                  VerticalScrollBarVisibility="Auto" />

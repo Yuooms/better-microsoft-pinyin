@@ -6,6 +6,7 @@ using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
 using BetterPinyin.App.Shell;
 using BetterPinyin.App.Shell.Controls;
 using BetterPinyin.Core.Cloud;
@@ -94,8 +95,8 @@ public sealed class ExtendedKeyItem
 /// </summary>
 /// <remarks>
 /// 直接读写 <see cref="AppSettings"/>，不做 ViewModel 层的双向绑定：
-/// 这个页面只有十几个控件，显式赋值比搭一套绑定基础设施更易读、更少出错，
-/// 也让「点保存才生效」的语义一目了然。
+/// 这个页面只有十几个控件，显式赋值比搭一套绑定基础设施更易读、更少出错。
+/// 没有保存按钮：任何改动都立即写回并生效，文本输入停手 500ms 再落盘。
 /// </remarks>
 public partial class CloudAssistPage : Page
 {
@@ -124,8 +125,15 @@ public partial class CloudAssistPage : Page
     private bool _draggingSources;
 
     // 本次打开设置页后是否已经确认过「拼音会发给搜狗」。
-    // 只记账一次：同一页里反复保存不该每次都弹框。
+    // 只记账一次：同一页里反复开关不该每次都弹框。
     private bool _sogouNoticeAccepted;
+
+    // 控件赋值（载入设置）期间会触发 Checked / SelectionChanged / TextChanged。
+    // 没有这层保护，打开页面第一屏就会被当成用户改动写回配置。
+    private bool _loading;
+
+    // 文本框逐字符触发 TextChanged：停手 500ms 再落盘，避免每敲一个数字写一次文件。
+    private readonly DispatcherTimer _textSaveTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
 
     /// <summary>创建设置页。</summary>
     /// <param name="feature">所属功能模块。</param>
@@ -137,6 +145,13 @@ public partial class CloudAssistPage : Page
         ExtendedKeysList.ItemsSource = _extendedKeys;
         SourcesList.ItemsSource = _sources;
         _sources.CollectionChanged += (_, _) => UpdateSourceState();
+
+        // 文本框停手后才写盘；失焦时直接由 OnSettingChanged 立即写一次。
+        _textSaveTimer.Tick += (_, _) =>
+        {
+            _textSaveTimer.Stop();
+            ApplyNow();
+        };
 
         Loaded += OnLoaded;
         Unloaded += OnUnloaded;
@@ -239,71 +254,95 @@ public partial class CloudAssistPage : Page
 
     private void LoadFromSettings()
     {
-        EnabledCheckBox.IsChecked = Settings.CloudAssistEnabled;
-        StrictCheckBox.IsChecked = Settings.StrictEnabled;
-        StrictDedupeCheckBox.IsChecked = Settings.StrictDedupeLocal;
-        ExtendedCheckBox.IsChecked = Settings.ExtendedEnabled;
-        ShowCloudIconCheckBox.IsChecked = Settings.ShowCloudIcon;
-        FuzzyCheckBox.IsChecked = Settings.FuzzyPinyin;
-        DoublePinyinCheckBox.IsChecked = Settings.DoublePinyinMode;
-        EnglishCheckBox.IsChecked = Settings.EnglishModeAssistEnabled;
+        // 下面的赋值会触发 Checked / SelectionChanged / TextChanged；
+        // 整个载入过程必须挡掉自动保存，否则一打开页面就会把控件默认值写回配置。
+        _loading = true;
+        try
+        {
+            EnabledCheckBox.IsChecked = Settings.CloudAssistEnabled;
+            StrictCheckBox.IsChecked = Settings.StrictEnabled;
+            StrictDedupeCheckBox.IsChecked = Settings.StrictDedupeLocal;
+            ExtendedCheckBox.IsChecked = Settings.ExtendedEnabled;
+            ShowCloudIconCheckBox.IsChecked = Settings.ShowCloudIcon;
+            FuzzyCheckBox.IsChecked = Settings.FuzzyPinyin;
+            DoublePinyinCheckBox.IsChecked = Settings.DoublePinyinMode;
+            EnglishCheckBox.IsChecked = Settings.EnglishModeAssistEnabled;
 
-        StrictKeyBox.KeyId = KeyNames.TryResolve(Settings.StrictAcceptKey, out _)
-            ? Settings.StrictAcceptKey
-            : "Oem3";
+            StrictKeyBox.KeyId = KeyNames.TryResolve(Settings.StrictAcceptKey, out _)
+                ? Settings.StrictAcceptKey
+                : "Oem3";
 
-        LoadSources();
-        ParallelCheckBox.IsChecked = Settings.ParallelCloudQuery;
-        SelectByTag(ExtendedCountComboBox, Settings.ExtendedMaxCount.ToString(CultureInfo.InvariantCulture));
-        SelectByTag(ExtendedKeyModeComboBox, Settings.ExtendedKeyMode);
-        SelectByTag(PlacementComboBox, Settings.OverlayPlacement);
-        SelectByTag(PopupStyleComboBox, PopupStyleCatalog.Normalize(Settings.PopupStyle));
-        SelectByTag(EnglishCommitComboBox, Settings.EnglishModeCommit);
+            LoadSources();
+            ParallelCheckBox.IsChecked = Settings.ParallelCloudQuery;
+            SelectByTag(ExtendedCountComboBox, Settings.ExtendedMaxCount.ToString(CultureInfo.InvariantCulture));
+            SelectByTag(ExtendedKeyModeComboBox, Settings.ExtendedKeyMode);
+            SelectByTag(PlacementComboBox, Settings.OverlayPlacement);
+            SelectByTag(PopupStyleComboBox, PopupStyleCatalog.Normalize(Settings.PopupStyle));
+            SelectByTag(EnglishCommitComboBox, Settings.EnglishModeCommit);
 
-        LoadExtendedKeys();
-        MinLengthTextBox.Text = Settings.MinQueryLength.ToString(CultureInfo.InvariantCulture);
-        DebounceTextBox.Text = Settings.DebounceMs.ToString(CultureInfo.InvariantCulture);
-        TimeoutTextBox.Text = Settings.RequestTimeoutMs.ToString(CultureInfo.InvariantCulture);
-        BlockedTextBox.Text = string.Join(", ", Settings.BlockedProcesses);
+            LoadExtendedKeys();
+            MinLengthTextBox.Text = Settings.MinQueryLength.ToString(CultureInfo.InvariantCulture);
+            DebounceTextBox.Text = Settings.DebounceMs.ToString(CultureInfo.InvariantCulture);
+            TimeoutTextBox.Text = Settings.RequestTimeoutMs.ToString(CultureInfo.InvariantCulture);
+            BlockedTextBox.Text = string.Join(", ", Settings.BlockedProcesses);
 
-        UpdateKeyModeState();
-        UpdateSourceState();
+            UpdateKeyModeState();
+            UpdateSourceState();
+        }
+        finally
+        {
+            _loading = false;
+        }
     }
 
-    private void OnSaveClick(object sender, RoutedEventArgs e)
+    /// <summary>任意开关、下拉、失焦都立即写回并生效。</summary>
+    private void OnSettingChanged(object sender, RoutedEventArgs e) => ApplyNow();
+
+    /// <summary>文本框改动：停手 500ms 再写，避免逐字符落盘。</summary>
+    private void OnTextSettingChanged(object sender, TextChangedEventArgs e)
     {
-        // 首次启用搜狗时确认一次：拼音会离开本机。已经在用搜狗的用户不会再被打扰。
-        var sogouEnabled = _sources
-            .FirstOrDefault(item => item.Id == CloudSourceCatalog.SogouId)?.Enabled == true;
-        var sogouWasEnabled = CloudSourceCatalog
-            .ResolveEnabled(Settings.CloudSources)
-            .Contains(CloudSourceCatalog.SogouId, StringComparer.OrdinalIgnoreCase);
-
-        if (sogouEnabled && !sogouWasEnabled && !_sogouNoticeAccepted)
+        if (_loading)
         {
-            var confirm = MessageBox.Show(
-                "启用搜狗后，你正在输入的拼音会上传给搜狗（shouji.sogou.com）。\n\n继续启用吗？",
-                "启用搜狗来源",
-                MessageBoxButton.OKCancel,
-                MessageBoxImage.Warning,
-                MessageBoxResult.Cancel);
-
-            if (confirm != MessageBoxResult.OK)
-            {
-                var item = _sources.FirstOrDefault(s => s.Id == CloudSourceCatalog.SogouId);
-                if (item is not null)
-                {
-                    item.Enabled = false;
-                }
-
-                UpdateSourceState();
-                SaveStatusText.Text = "已取消启用搜狗";
-                return;
-            }
-
-            _sogouNoticeAccepted = true;
+            return;
         }
 
+        _textSaveTimer.Stop();
+        _textSaveTimer.Start();
+    }
+
+    private void OnStrictKeyCaptured(object? sender, KeyCapturedEventArgs e) => ApplyNow();
+
+    /// <summary>
+    /// 把控件状态写回设置、落盘，并让功能模块立即采用。
+    /// </summary>
+    /// <remarks>
+    /// 这一页没有「保存」按钮：任何一次改动都走这里。写盘失败不能静默——
+    /// 否则用户改完以为生效了，重启又变回去。
+    /// </remarks>
+    private void ApplyNow()
+    {
+        if (_loading)
+        {
+            return;
+        }
+
+        WriteToSettings();
+
+        var saved = AppServices.SaveSettings();
+        _feature.ApplySettings();
+        UpdateKeyModeState();
+        UpdateSourceState();
+
+        SaveStatusText.Text = !saved
+            ? $"写入配置失败：{AppServices.Store.LastError}"
+            : Settings.ExtendedKeyMode == "Manual" && _extendedKeys.Count == 0
+                ? "已保存；手动模式还没有采纳键，扩展云联想不会显示"
+                : "已保存";
+    }
+
+    /// <summary>把控件状态写回设置对象，不落盘。</summary>
+    private void WriteToSettings()
+    {
         // UI 里的顺序就是取词优先级；归一化顺带补齐将来新增的来源（补在末尾并保持禁用）。
         Settings.CloudSources = CloudSourceCatalog.NormalizeList(
             _sources.Select(item => new CloudSourceSetting
@@ -345,20 +384,6 @@ public partial class CloudAssistPage : Page
             .Where(item => item.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-
-        var saved = AppServices.SaveSettings();
-        _feature.ApplySettings();
-        UpdateKeyModeState();
-
-        if (!saved)
-        {
-            SaveStatusText.Text = $"已应用，但写入配置失败：{AppServices.Store.LastError}";
-            return;
-        }
-
-        SaveStatusText.Text = Settings.ExtendedKeyMode == "Manual" && _extendedKeys.Count == 0
-            ? "已保存；手动模式还没有采纳键，扩展云联想不会显示"
-            : "已保存并立即生效";
     }
 
     private void OnResetClick(object sender, RoutedEventArgs e)
@@ -443,13 +468,46 @@ public partial class CloudAssistPage : Page
 
     private void OnSourceItemChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName == nameof(CloudSourceItem.Enabled))
+        if (e.PropertyName != nameof(CloudSourceItem.Enabled) || _loading)
         {
-            UpdateSourceState();
+            return;
         }
+
+        // 首次启用搜狗时确认一次：拼音会离开本机。已经在用搜狗的用户不会再被打扰。
+        if (sender is CloudSourceItem { Id: CloudSourceCatalog.SogouId, Enabled: true } item &&
+            !_sogouNoticeAccepted &&
+            !CloudSourceCatalog.ResolveEnabled(Settings.CloudSources)
+                .Contains(CloudSourceCatalog.SogouId, StringComparer.OrdinalIgnoreCase))
+        {
+            var confirm = MessageBox.Show(
+                "启用搜狗后，你正在输入的拼音会上传给搜狗（shouji.sogou.com）。\n\n继续启用吗？",
+                "启用搜狗来源",
+                MessageBoxButton.OKCancel,
+                MessageBoxImage.Warning,
+                MessageBoxResult.Cancel);
+
+            if (confirm != MessageBoxResult.OK)
+            {
+                // 回滚开关时不要再触发一次保存：这一步本身没有改动需要落盘。
+                _loading = true;
+                item.Enabled = false;
+                _loading = false;
+                UpdateSourceState();
+                SaveStatusText.Text = "已取消启用搜狗";
+                return;
+            }
+
+            _sogouNoticeAccepted = true;
+        }
+
+        ApplyNow();
     }
 
-    private void OnExtendedEnabledChanged(object sender, RoutedEventArgs e) => UpdateSourceState();
+    private void OnExtendedEnabledChanged(object sender, RoutedEventArgs e)
+    {
+        UpdateSourceState();
+        ApplyNow();
+    }
 
     /// <summary>
     /// 刷新来源相关的两处提示。
@@ -543,6 +601,9 @@ public partial class CloudAssistPage : Page
             _sourceDragItem = null;
             _draggingSources = false;
             SourcesList.ReleaseMouseCapture();
+
+            // 拖动过程中只换位、不写盘，松手才落一次：顺序就是优先级，必须存下来。
+            ApplyNow();
         }
     }
 
@@ -559,7 +620,11 @@ public partial class CloudAssistPage : Page
         return container?.DataContext as CloudSourceItem;
     }
 
-    private void OnKeyModeChanged(object sender, SelectionChangedEventArgs e) => UpdateKeyModeState();
+    private void OnKeyModeChanged(object sender, SelectionChangedEventArgs e)
+    {
+        UpdateKeyModeState();
+        ApplyNow();
+    }
 
     /// <summary>「键位分配」是否选了手动指定。</summary>
     private bool IsManualKeyMode =>
@@ -649,8 +714,7 @@ public partial class CloudAssistPage : Page
 
         // 能走到这里说明当前就是手动模式：自动模式下添加框是禁用的。
         _extendedKeys.Add(new ExtendedKeyItem(e.KeyId, e.VirtualKey, KeyNames.Describe(e.VirtualKey)));
-        SaveStatusText.Text = "已添加，记得点「保存并应用」。";
-        UpdateKeyModeState();
+        ApplyNow();
     }
 
     private void OnRemoveExtendedKeyClick(object sender, RoutedEventArgs e)
@@ -658,8 +722,7 @@ public partial class CloudAssistPage : Page
         if ((sender as FrameworkElement)?.DataContext is ExtendedKeyItem item)
         {
             _extendedKeys.Remove(item);
-            SaveStatusText.Text = "已移除，记得点「保存并应用」。";
-            UpdateKeyModeState();
+            ApplyNow();
         }
 
         e.Handled = true;
@@ -727,7 +790,6 @@ public partial class CloudAssistPage : Page
         }
 
         _extendedKeys.Move(oldIndex, newIndex);
-        SaveStatusText.Text = "顺序已调整，记得点「保存并应用」。";
         e.Handled = true;
     }
 
@@ -738,6 +800,7 @@ public partial class CloudAssistPage : Page
             _dragItem = null;
             _draggingKeys = false;
             ExtendedKeysList.ReleaseMouseCapture();
+            ApplyNow();
         }
     }
 

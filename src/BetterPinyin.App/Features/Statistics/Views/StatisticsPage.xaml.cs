@@ -40,7 +40,7 @@ public sealed class AppBar
 /// <remarks>
 /// 与云联想页一样直接操作控件、不搭 ViewModel 层：控件数量有限，
 /// 显式赋值比双向绑定更容易看出「什么时候生效」。
-/// 开关即时生效（统计要能立刻停），保存按钮负责把当前数字落盘。
+/// 没有保存按钮：开关与保留期改动即落盘，切换开关时顺手把当前数字写一次。
 /// </remarks>
 public partial class StatisticsPage : Page
 {
@@ -126,17 +126,9 @@ public partial class StatisticsPage : Page
 
         PerAppToggle.IsEnabled = Settings.StatisticsEnabled;
         _feature.SetEnabled(Settings.StatisticsEnabled);
-        Refresh();
-    }
 
-    private void OnSaveClick(object sender, RoutedEventArgs e)
-    {
-        AppServices.SaveSettings();
-
-        SaveStatusText.Text = _feature.SaveNow()
-            ? "已保存。"
-            : $"保存失败：{_feature.Store.LastError}";
-
+        // 关掉开关时把已经累计的数字落盘，别等退出程序才写。
+        _feature.SaveNow();
         Refresh();
     }
 

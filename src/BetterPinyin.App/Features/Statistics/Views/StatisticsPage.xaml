@@ -6,24 +6,16 @@
       FontFamily="Microsoft YaHei UI, Segoe UI">
 
     <DockPanel>
-        <!-- 保存条固定在底部：页面再长也不用滚到底才能保存 -->
+        <!-- 没有保存按钮：开关与保留期都即时生效，这里只留状态提示 -->
         <Border DockPanel.Dock="Bottom"
                 Background="{DynamicResource SurfaceBrush}"
                 BorderBrush="{DynamicResource BorderBrush}"
                 BorderThickness="0,1,0,0"
                 Padding="42,12">
-            <StackPanel Orientation="Horizontal">
-                <fl:Button x:Name="SaveButton"
-                           Content="保存并应用"
-                           Appearance="Primary"
-                           MinWidth="120"
-                           Click="OnSaveClick" />
-                <TextBlock x:Name="SaveStatusText"
-                           VerticalAlignment="Center"
-                           Margin="12,0,0,0"
-                           Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                           TextWrapping="Wrap" />
-            </StackPanel>
+            <TextBlock x:Name="SaveStatusText"
+                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
+                       TextWrapping="Wrap"
+                       Text="改动会立即生效并自动保存" />
         </Border>
 
         <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
